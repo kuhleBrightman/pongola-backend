@@ -9,6 +9,7 @@ const bcrypt = require('bcrypt'); // Assuming this is used elsewhere in the full
 const fs = require('fs');
 const crypto = require('crypto');
 require('dotenv').config();
+const upload3 = require('./config/storage');
 
 
 const morgan = require('morgan');
@@ -69,31 +70,31 @@ if (!fs.existsSync(uploadDir)) {
 app.use('/uploads', express.static(uploadDir));
 
 
-const storage2 = multer.diskStorage({
-    destination: function (req, file, cb) {
-        // Store files in the 'uploads' directory
-        cb(null, uploadDir); // uploadDir is already defined using __dirname
-    },
-    filename: function (req, file, cb) {
-        // Generate a unique filename: fieldname-timestamp.ext
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-    }
-});
+// const storage2 = multer.diskStorage({
+//     destination: function (req, file, cb) {
+//         // Store files in the 'uploads' directory
+//         cb(null, uploadDir); // uploadDir is already defined using __dirname
+//     },
+//     filename: function (req, file, cb) {
+//         // Generate a unique filename: fieldname-timestamp.ext
+//         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+//         cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+//     }
+// });
 
 // Create the multer upload middleware instance
 // 'images' is the name of the file input field on the frontend
-const upload2 = multer({
-    storage: storage2,
-    limits: { fileSize: 10 * 1024 * 1024 }, // Limit file size to 10MB (adjust as needed)
-    fileFilter: (req, file, cb) => {
-        // Accept images only
-        if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/i)) {
-            return cb(new Error('Only image files (JPG, JPEG, PNG, GIF) are allowed!'), false);
-        }
-        cb(null, true);
-    }
-});
+// const upload2 = multer({
+//     storage: storage2,
+//     limits: { fileSize: 10 * 1024 * 1024 }, // Limit file size to 10MB (adjust as needed)
+//     fileFilter: (req, file, cb) => {
+//         // Accept images only
+//         if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/i)) {
+//             return cb(new Error('Only image files (JPG, JPEG, PNG, GIF) are allowed!'), false);
+//         }
+//         cb(null, true);
+//     }
+// });
 
 app.get('/', (req, res) => {
     res.json('thought i was going to say hello world ,sike!');
@@ -107,9 +108,9 @@ app.get('/jss', (req, res) => {
 
 // payfast aspects
 
-const PAYFAST_MERCHANT_ID = '10030988';
-const PAYFAST_MERCHANT_KEY = '2h99wu1jddrdr';
-const PAYFAST_PASSPHRASE = 'thisisthepassphrass';
+const PAYFAST_MERCHANT_ID = process.env.PAYFAST_MERCHANT_ID;
+const PAYFAST_MERCHANT_KEY = process.env.PAYFAST_MERCHANT_KEY;
+const PAYFAST_PASSPHRASE = process.env.PAYFAST_PASSPHRASE;
 // const PAYFAST_URL = 'https://www.payfast.co.za/eng/process';
 const PAYFAST_URL = 'https://sandbox.payfast.co.za/eng/process';
 
@@ -489,7 +490,7 @@ app.get('/api/products/:productId/images', (req, res) => {
 // --- API Endpoint to Upload Images for a Product ---
 // This endpoint will handle POST requests to /api/products/:productId/images
 // It uses the 'upload' middleware configured with multer
-app.post('/api/products/:productId/images', upload2.array('images', 5), (req, res) => { // 'images' is the field name, 5 is max count
+app.post('--/api/products/:productId/images', upload2.array('images', 5), (req, res) => { // 'images' is the field name, 5 is max count
     const productId = req.params.productId;
     const files = req.files; // Array of uploaded files provided by multer
 
@@ -579,6 +580,70 @@ app.post('/api/products/:productId/images', upload2.array('images', 5), (req, re
     });
 });
 
+
+app.post('/api/products/:productId/images', upload3.array('images', 5), (req, res) => {
+    const productId = req.params.productId;
+    const files = req.files;
+
+    if (!files || files.length === 0) {
+        return res.status(400).json({ message: 'No image files uploaded.' });
+    }
+
+    const checkProductSql = 'SELECT 1 FROM `product` WHERE `ProductId` = ?;';
+    db.query(checkProductSql, [productId], (err, productResults) => {
+        if (err) return res.status(500).json({ message: 'Product check failed.' });
+        if (productResults.length === 0)
+            return res.status(404).json({ message: `Product with ID ${productId} not found.` });
+
+        const countImagesSql = 'SELECT COUNT(*) AS imageCount FROM `product_image` WHERE `ProductID` = ?;';
+        db.query(countImagesSql, [productId], (err, countResults) => {
+            if (err) return res.status(500).json({ message: 'Image count check failed.' });
+
+            const existingImageCount = countResults[0].imageCount;
+            const totalImagesAfterUpload = existingImageCount + files.length;
+
+            if (totalImagesAfterUpload > 5) {
+                return res.status(400).json({
+                    message: `Max 5 images allowed. You already have ${existingImageCount}, uploaded ${files.length}.`
+                });
+            }
+
+            const getMaxSortOrderSql = 'SELECT MAX(`SortOrder`) AS maxSortOrder FROM `product_image` WHERE `ProductID` = ?;';
+            db.query(getMaxSortOrderSql, [productId], (err, maxSortOrderResults) => {
+                if (err) return res.status(500).json({ message: 'Sort order fetch failed.' });
+
+                const maxSortOrder = maxSortOrderResults[0].maxSortOrder || -1;
+                let currentSortOrder = maxSortOrder + 1;
+
+                const imageValues = files.map((file, index) => [
+                    productId,
+                    file.path, // ✅ Cloudinary URL
+                    existingImageCount === 0 && index === 0 ? 0 : currentSortOrder++
+                ]);
+
+                const insertImagesSql = `
+                    INSERT INTO \`product_image\` (\`ProductID\`, \`Image_url\`, \`SortOrder\`)
+                    VALUES ?;
+                `;
+
+                db.query(insertImagesSql, [imageValues], (err, result) => {
+                    if (err) {
+                        console.error('Image insert error:', err);
+                        return res.status(500).json({ message: 'Failed to save images.' });
+                    }
+
+                    res.status(201).json({
+                        message: 'Images uploaded and saved to DB successfully.',
+                        uploadedCount: files.length,
+                        firstInsertId: result.insertId
+                    });
+                });
+            });
+        });
+    });
+});
+
+
 // --- API Endpoint to Set an Image as Cover ---
 // This endpoint will handle PUT requests to /api/images/:imageId/set-cover
 app.put('/api/images/:imageId/set-cover', (req, res) => {
@@ -649,7 +714,7 @@ app.put('/api/images/:imageId/set-cover', (req, res) => {
 
 // --- API Endpoint to Delete an Image by ID ---
 // This endpoint will handle DELETE requests to /api/images/:imageId
-app.delete('/api/images/:imageId', (req, res) => {
+app.delete('---/api/images/:imageId', (req, res) => {
     const imageIdToDelete = req.params.imageId; // This is ImageId from product_image
 
     // First, get the image file path, SortOrder, and ProductID before deleting the record
@@ -750,8 +815,85 @@ app.delete('/api/images/:imageId', (req, res) => {
     });
 });
 
+function extractPublicId(url) {
+    const parts = url.split('/');
+    const filename = parts.pop().split('.')[0];
+    const folder = parts.slice(parts.indexOf('upload') + 1).join('/');
+    return `${folder}/${filename}`;
+}
 
-app.get('/api/products-with-images', (req, res) => { // Renamed endpoint
+app.delete('/api/images/:imageId', (req, res) => {
+    const imageIdToDelete = req.params.imageId;
+
+    const getImageInfoSql = `
+        SELECT Image_url, SortOrder, ProductID 
+        FROM product_image 
+        WHERE ImageId = ?;
+    `;
+    db.query(getImageInfoSql, [imageIdToDelete], (err, results) => {
+        if (err || results.length === 0) {
+            console.error('Error fetching image for deletion:', err);
+            return res.status(404).json({ message: 'Image not found.' });
+        }
+
+        const imageInfo = results[0];
+        const wasCover = imageInfo.SortOrder === 0;
+        const productId = imageInfo.ProductID;
+        const publicId = extractPublicId(imageInfo.Image_url);
+
+        db.beginTransaction(err => {
+            if (err) return res.status(500).json({ message: 'Transaction start error.' });
+
+            // 1. Delete DB record
+            const deleteImageSql = 'DELETE FROM product_image WHERE ImageId = ?;';
+            db.query(deleteImageSql, [imageIdToDelete], (err, deleteResult) => {
+                if (err) return db.rollback(() =>
+                    res.status(500).json({ message: 'DB delete error.' }));
+
+                // 2. Delete from Cloudinary
+                cloudinary.uploader.destroy(publicId, (error, result) => {
+                    if (error) console.error('Cloudinary delete failed:', error);
+                    else console.log('Deleted from Cloudinary:', result);
+
+                    // 3. Handle cover image replacement
+                    if (wasCover) {
+                        const findNewCoverSql = `
+                            SELECT ImageId FROM product_image 
+                            WHERE ProductID = ? 
+                            ORDER BY SortOrder ASC, ImageId ASC LIMIT 1;
+                        `;
+                        db.query(findNewCoverSql, [productId], (err, newCoverResults) => {
+                            if (err || newCoverResults.length === 0) {
+                                return db.commit(commitErr => {
+                                    if (commitErr) console.error('Commit error after cover delete:', commitErr);
+                                    res.json({ message: `Image deleted. No new cover set.` });
+                                });
+                            }
+
+                            const newCoverImageId = newCoverResults[0].ImageId;
+                            const setNewCoverSql = 'UPDATE product_image SET SortOrder = 0 WHERE ImageId = ?;';
+                            db.query(setNewCoverSql, [newCoverImageId], (err, updateResult) => {
+                                db.commit(commitErr => {
+                                    if (commitErr) console.error('Commit error:', commitErr);
+                                    res.json({ message: `Image deleted. New cover set.` });
+                                });
+                            });
+                        });
+                    } else {
+                        db.commit(commitErr => {
+                            if (commitErr) console.error('Commit error:', commitErr);
+                            res.json({ message: `Image deleted successfully.` });
+                        });
+                    }
+                });
+            });
+        });
+    });
+});
+
+
+
+app.get('---/api/products-with-images', (req, res) => { // Renamed endpoint
     // SQL query to fetch all products and their associated image URLs
     // This uses a LEFT JOIN to get all products, even if they have no images
     // GROUP_CONCAT is used to aggregate multiple image URLs into a single string per product
@@ -801,6 +943,52 @@ app.get('/api/products-with-images', (req, res) => { // Renamed endpoint
         res.json(formattedResults);
     });
 });
+
+app.get('/api/products-with-images', (req, res) => {
+    const sqlQuery = `
+        SELECT
+            p.ProductId,
+            p.CategoryID,
+            p.ProductName,
+            p.ProductDescription,
+            p.Price,
+            p.Brand,
+            p.Dimensions,
+            p.Weight,
+            p.IsAvailable,
+            p.StockQuantity,
+            p.CreatedAt,
+            p.UpdatedAt,
+            GROUP_CONCAT(
+                pi.Image_url
+                ORDER BY pi.SortOrder ASC, pi.ImageId ASC
+                SEPARATOR ','
+            ) AS ImageUrls
+        FROM gcinumus_PongolaSupplies_db.product p
+        LEFT JOIN gcinumus_PongolaSupplies_db.product_image pi 
+        ON p.ProductId = pi.ProductID
+        GROUP BY p.ProductId
+        ORDER BY p.ProductId;
+    `;
+
+    db.query(sqlQuery, (err, results) => {
+        if (err) {
+            console.error('Error fetching products with images:', err);
+            return res.status(500).json({ message: 'Failed to fetch products.' });
+        }
+
+        const formattedResults = results.map(product => ({
+            ...product,
+            ImageUrls: product.ImageUrls ? product.ImageUrls.split(',') : []
+        }));
+
+        res.json(formattedResults);
+    });
+});
+
+
+
+
 
 
 app.get('/api/products', (req, res) => {
