@@ -379,38 +379,167 @@ app.post('/api/payfast-itn', (req, res) => {
 });
 
 
+app.get('/api/products/:productId/images', (req, res) => {
+    const productId = req.params.productId;
 
+    const sqlQuery = `
+        SELECT
+            ImageId,
+            ProductID,
+            Image_url AS ImageUrl,
+            SortOrder,
+            UploadedAt
+        FROM gcinumus_PongolaSupplies_db.product_image
+        WHERE ProductID = ?
+        ORDER BY SortOrder ASC, ImageId ASC;
+    `;
+
+    db.query(sqlQuery, [productId], (err, results) => {
+        if (err) {
+            console.error('Error fetching images for product:', err);
+            return res.status(500).json({ message: 'An error occurred while fetching images.' });
+        }
+
+        res.json(results);
+    });
+});
+
+
+// app.get('/api/products-with-images/:productId', (req, res) => {
+//     const productId = req.params.productId;
+
+//     // SQL query to fetch a single product and its associated image URLs and SortOrder
+//     // This uses a LEFT JOIN to get the product and its images.
+//     // It orders images by SortOrder (0 first) then ImageId.
+//     // We select individual image details here, not a concatenated string,
+//     // because the frontend Product page needs details for each image (ID, URL, SortOrder).
+//     const sqlQuery = `
+//       SELECT
+//           p.\`ProductId\`,
+//           p.\`CategoryID\`,
+//           p.\`ProductName\`,
+//           p.\`ProductDescription\`,
+//           p.\`Price\`,
+//           p.\`Brand\`,
+//           p.\`Dimensions\`,
+//           p.\`Weight\`,
+//           p.\`IsAvailable\`,
+//           p.\`StockQuantity\`,
+//           p.\`CreatedAt\`,
+//           p.\`UpdatedAt\`,
+//           -- Select individual image details from product_image
+//           pi.\`ImageId\`, -- Use ImageId
+//           CONCAT('/uploads/', pi.\`Image_url\`) AS ImageUrl, -- Use Image_url and provide full URL
+//           pi.\`SortOrder\` -- Use SortOrder
+//       FROM \`gcinumus_PongolaSupplies_db\`.\`product\` p
+//       LEFT JOIN \`gcinumus_PongolaSupplies_db\`.\`product_image\` pi ON p.\`ProductId\` = pi.\`ProductID\` -- Corrected join condition and table name
+//       WHERE p.\`ProductId\` = ?
+//       ORDER BY pi.\`SortOrder\` ASC, pi.\`ImageId\` ASC; -- Order images by SortOrder (0 first) then ID
+//     `;
+
+//     db.query(sqlQuery, [productId], (err, results) => {
+//         if (err) {
+//             console.error('Error fetching single product with images:', err);
+//             return res.status(500).json({ message: 'An error occurred while fetching the product.' });
+//         }
+
+//         if (results.length === 0) {
+//             // If no product found with this ID, return 404
+//             // Note: If a product exists but has no images, results will still have one row with null image fields.
+//             // We check results.length for the product itself.
+//             return res.status(404).json({ message: `Product with ID ${productId} not found.` });
+//         }
+
+//         // Format the results: Combine product details and group images
+//         // Since the query returns multiple rows for a product with multiple images,
+//         // we need to structure the response to have one product object with an array of images.
+//         const product = {
+//             ProductId: results[0].ProductId,
+//             CategoryID: results[0].CategoryID,
+//             ProductName: results[0].ProductName,
+//             ProductDescription: results[0].ProductDescription,
+//             Price: results[0].Price,
+//             Brand: results[0].Brand,
+//             Dimensions: results[0].Dimensions,
+//             Weight: results[0].Weight,
+//             IsAvailable: results[0].IsAvailable,
+//             StockQuantity: results[0].StockQuantity,
+//             CreatedAt: results[0].CreatedAt,
+//             UpdatedAt: results[0].UpdatedAt,
+//             Images: [] // Array to hold image objects
+//         };
+
+//         // If the first row's ImageId is not null, it means there are images.
+//         // Map all result rows (which belong to this product) into image objects.
+//         if (results[0].ImageId !== null) {
+//             product.Images = results.map(row => ({
+//                 ImageId: row.ImageId, // Use ImageId
+//                 ImageUrl: row.ImageUrl, // Use the full ImageUrl
+//                 SortOrder: row.SortOrder // Use SortOrder
+//                 // You could add IsCover: row.SortOrder === 0 here if you prefer
+//             }));
+//         }
+
+//         res.json(product);
+//     });
+// });
+
+// app.get('/api/products/:productId/images', (req, res) => {
+//     const productId = req.params.productId;
+
+//     // SQL query to fetch all images for a given product, ordered by SortOrder (0 first)
+//     const sqlQuery = `
+//         SELECT
+//             \`ImageId\`, -- Use ImageId
+//             \`ProductID\`, -- Use ProductID
+//             CONCAT('/uploads/', \`Image_url\`) AS ImageUrl, -- Use Image_url and provide the full URL
+//             \`SortOrder\`, -- Use SortOrder
+//             \`UploadedAt\` -- Use UploadedAt
+//         FROM \`gcinumus_PongolaSupplies_db\`.\`product_image\` -- Use product_image table
+//         WHERE \`ProductID\` = ? -- Use ProductID column
+//         ORDER BY \`SortOrder\` ASC, \`ImageId\` ASC; -- Order by SortOrder then ImageId
+//     `;
+
+//     db.query(sqlQuery, [productId], (err, results) => {
+//         if (err) {
+//             console.error('Error fetching images for product:', err);
+//             return res.status(500).json({ message: 'An error occurred while fetching images.' });
+//         }
+//         // Return the array of image objects
+//         res.json(results);
+//     });
+// });
+
+
+// --- API Endpoint to Upload Images for a Product ---
+// This endpoint will handle POST requests to /api/products/:productId/images
+// It uses the 'upload' middleware configured with multer
 
 app.get('/api/products-with-images/:productId', (req, res) => {
     const productId = req.params.productId;
 
-    // SQL query to fetch a single product and its associated image URLs and SortOrder
-    // This uses a LEFT JOIN to get the product and its images.
-    // It orders images by SortOrder (0 first) then ImageId.
-    // We select individual image details here, not a concatenated string,
-    // because the frontend Product page needs details for each image (ID, URL, SortOrder).
     const sqlQuery = `
       SELECT
-          p.\`ProductId\`,
-          p.\`CategoryID\`,
-          p.\`ProductName\`,
-          p.\`ProductDescription\`,
-          p.\`Price\`,
-          p.\`Brand\`,
-          p.\`Dimensions\`,
-          p.\`Weight\`,
-          p.\`IsAvailable\`,
-          p.\`StockQuantity\`,
-          p.\`CreatedAt\`,
-          p.\`UpdatedAt\`,
-          -- Select individual image details from product_image
-          pi.\`ImageId\`, -- Use ImageId
-          CONCAT('/uploads/', pi.\`Image_url\`) AS ImageUrl, -- Use Image_url and provide full URL
-          pi.\`SortOrder\` -- Use SortOrder
-      FROM \`gcinumus_PongolaSupplies_db\`.\`product\` p
-      LEFT JOIN \`gcinumus_PongolaSupplies_db\`.\`product_image\` pi ON p.\`ProductId\` = pi.\`ProductID\` -- Corrected join condition and table name
-      WHERE p.\`ProductId\` = ?
-      ORDER BY pi.\`SortOrder\` ASC, pi.\`ImageId\` ASC; -- Order images by SortOrder (0 first) then ID
+          p.ProductId,
+          p.CategoryID,
+          p.ProductName,
+          p.ProductDescription,
+          p.Price,
+          p.Brand,
+          p.Dimensions,
+          p.Weight,
+          p.IsAvailable,
+          p.StockQuantity,
+          p.CreatedAt,
+          p.UpdatedAt,
+          pi.ImageId,
+          pi.Image_url AS ImageUrl,
+          pi.SortOrder
+      FROM gcinumus_PongolaSupplies_db.product p
+      LEFT JOIN gcinumus_PongolaSupplies_db.product_image pi 
+        ON p.ProductId = pi.ProductID
+      WHERE p.ProductId = ?
+      ORDER BY pi.SortOrder ASC, pi.ImageId ASC;
     `;
 
     db.query(sqlQuery, [productId], (err, results) => {
@@ -420,15 +549,9 @@ app.get('/api/products-with-images/:productId', (req, res) => {
         }
 
         if (results.length === 0) {
-            // If no product found with this ID, return 404
-            // Note: If a product exists but has no images, results will still have one row with null image fields.
-            // We check results.length for the product itself.
             return res.status(404).json({ message: `Product with ID ${productId} not found.` });
         }
 
-        // Format the results: Combine product details and group images
-        // Since the query returns multiple rows for a product with multiple images,
-        // we need to structure the response to have one product object with an array of images.
         const product = {
             ProductId: results[0].ProductId,
             CategoryID: results[0].CategoryID,
@@ -442,54 +565,20 @@ app.get('/api/products-with-images/:productId', (req, res) => {
             StockQuantity: results[0].StockQuantity,
             CreatedAt: results[0].CreatedAt,
             UpdatedAt: results[0].UpdatedAt,
-            Images: [] // Array to hold image objects
+            Images: []
         };
 
-        // If the first row's ImageId is not null, it means there are images.
-        // Map all result rows (which belong to this product) into image objects.
         if (results[0].ImageId !== null) {
             product.Images = results.map(row => ({
-                ImageId: row.ImageId, // Use ImageId
-                ImageUrl: row.ImageUrl, // Use the full ImageUrl
-                SortOrder: row.SortOrder // Use SortOrder
-                // You could add IsCover: row.SortOrder === 0 here if you prefer
+                ImageId: row.ImageId,
+                ImageUrl: row.ImageUrl,
+                SortOrder: row.SortOrder
             }));
         }
 
         res.json(product);
     });
 });
-
-app.get('/api/products/:productId/images', (req, res) => {
-    const productId = req.params.productId;
-
-    // SQL query to fetch all images for a given product, ordered by SortOrder (0 first)
-    const sqlQuery = `
-        SELECT
-            \`ImageId\`, -- Use ImageId
-            \`ProductID\`, -- Use ProductID
-            CONCAT('/uploads/', \`Image_url\`) AS ImageUrl, -- Use Image_url and provide the full URL
-            \`SortOrder\`, -- Use SortOrder
-            \`UploadedAt\` -- Use UploadedAt
-        FROM \`gcinumus_PongolaSupplies_db\`.\`product_image\` -- Use product_image table
-        WHERE \`ProductID\` = ? -- Use ProductID column
-        ORDER BY \`SortOrder\` ASC, \`ImageId\` ASC; -- Order by SortOrder then ImageId
-    `;
-
-    db.query(sqlQuery, [productId], (err, results) => {
-        if (err) {
-            console.error('Error fetching images for product:', err);
-            return res.status(500).json({ message: 'An error occurred while fetching images.' });
-        }
-        // Return the array of image objects
-        res.json(results);
-    });
-});
-
-
-// --- API Endpoint to Upload Images for a Product ---
-// This endpoint will handle POST requests to /api/products/:productId/images
-// It uses the 'upload' middleware configured with multer
 
 
 app.post('/api/products/:productId/images', upload3.array('images', 5), (req, res) => {
