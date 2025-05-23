@@ -120,6 +120,344 @@ const CANCEL_URL = 'http://localhost:5173/OrderSuccess';
 const NOTIFY_URL = '';
 
 
+app.get('/api/categories', (req, res) => {
+    const sqlQuery = 'SELECT CategoryId, Name, Description, Image, ParentCategoryId, CreatedAt, UpdatedAt FROM category';
+    db.query(sqlQuery, (err, results) => {
+        if (err) {
+            console.error('Error fetching categories:', err);
+            return res.status(500).json({ message: 'An error occurred while fetching categories.' });
+        }
+        res.json(results);
+    });
+});
+
+
+// GET category by ID
+app.get('/api/categories/:id', (req, res) => {
+    const { id } = req.params;
+    const sqlQuery = 'SELECT CategoryId, Name, Description, Image, ParentCategoryId, CreatedAt, UpdatedAt FROM category WHERE CategoryId = ?';
+    db.query(sqlQuery, [id], (err, results) => {
+        if (err) {
+            console.error(`Error fetching category with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while fetching category.' });
+        }
+        if (results.length === 0) {
+            return res.status(404).json({ message: 'Category not found' });
+        }
+        res.json(results[0]);
+    });
+});
+
+// POST (Create) a new category
+app.post('/api/categories', (req, res) => {
+    const { Name, Description, Image, ParentCategoryId } = req.body;
+    // Basic validation
+    if (!Name) {
+        return res.status(400).json({ message: 'Category Name is required' });
+    }
+    const sqlQuery = 'INSERT INTO category (Name, Description, Image, ParentCategoryId) VALUES (?, ?, ?, ?)';
+    db.query(sqlQuery, [Name, Description, Image, ParentCategoryId], (err, result) => {
+        if (err) {
+            console.error('Error creating category:', err);
+            return res.status(500).json({ message: 'An error occurred while creating the category.' });
+        }
+        res.status(201).json({
+            message: 'Category created successfully',
+            category: {
+                CategoryId: result.insertId,
+                Name,
+                Description,
+                Image: Image || 'none',
+                ParentCategoryId: result.insertId,
+                // CreatedAt: new Date().toISOString(), // Simulate creation time
+                // UpdatedAt: new Date().toISOString()  // Simulate update time
+            }
+        });
+    });
+});
+
+
+// PUT (Update) an existing category
+app.put('/api/categories/:id', (req, res) => {
+    const { id } = req.params;
+    const { Name, Description, Image, ParentCategoryId } = req.body;
+    // Allow partial updates, but ensure at least one field is provided
+    if (!Name && !Description && !Image) {
+        return res.status(400).json({ message: 'No fields provided for update' });
+    }
+
+    let updateFields = [];
+    let queryParams = [];
+
+    if (Name !== undefined) { updateFields.push('Name = ?'); queryParams.push(Name); }
+    if (Description !== undefined) { updateFields.push('Description = ?'); queryParams.push(Description); }
+    if (Image !== undefined) { updateFields.push('Image = ?'); queryParams.push(Image); }
+    // Handle ParentCategoryId specifically for null
+    if (ParentCategoryId !== undefined) {
+        updateFields.push('ParentCategoryId = ?');
+        queryParams.push(ParentCategoryId);
+    }
+    updateFields.push('UpdatedAt = NOW()'); // Update timestamp
+
+    queryParams.push(id); // Add ID for WHERE clause
+
+    const sqlQuery = `UPDATE category SET ${updateFields.join(', ')} WHERE CategoryId = ?`;
+
+    db.query(sqlQuery, queryParams, (err, result) => {
+        if (err) {
+            console.error(`Error updating category with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while updating the category.' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Category not found or no changes made' });
+        }
+        // Fetch the updated record to return it
+        db.query('SELECT CategoryId, Name, Description, Image, ParentCategoryId, CreatedAt, UpdatedAt FROM category WHERE CategoryId = ?', [id], (err, updatedRows) => {
+            if (err) {
+                console.error(`Error fetching updated category with ID ${id}:`, err);
+                return res.status(500).json({ message: 'An error occurred while fetching the updated category.' });
+            }
+            res.json({
+                message: 'Category updated successfully',
+                category: updatedRows[0]
+            });
+        });
+    });
+});
+
+
+// DELETE a category
+app.delete('/api/categories/:id', (req, res) => {
+    const { id } = req.params;
+    const sqlQuery = 'DELETE FROM category WHERE CategoryId = ?';
+    db.query(sqlQuery, [id], (err, result) => {
+        if (err) {
+            console.error(`Error deleting category with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while deleting the category.' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Category not found' });
+        }
+        res.status(200).json({ message: 'Category deleted successfully' });
+    });
+});
+
+// --- PRODUCT TYPE Endpoints ---
+
+// GET all product types
+app.get('/api/types', (req, res) => {
+    const sqlQuery = 'SELECT TypeId, CategoryID, TypeName, CreatedAt, UpdatedAt FROM product_type';
+    db.query(sqlQuery, (err, results) => {
+        if (err) {
+            console.error('Error fetching product types:', err);
+            return res.status(500).json({ message: 'An error occurred while fetching product types.' });
+        }
+        res.json(results);
+    });
+});
+
+// GET product type by ID
+app.get('/api/types/:id', (req, res) => {
+    const { id } = req.params;
+    const sqlQuery = 'SELECT TypeId, CategoryID, TypeName, CreatedAt, UpdatedAt FROM product_type WHERE TypeId = ?';
+    db.query(sqlQuery, [id], (err, results) => {
+        if (err) {
+            console.error(`Error fetching product type with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while fetching the product type.' });
+        }
+        if (results.length === 0) {
+            return res.status(404).json({ message: 'Product type not found' });
+        }
+        res.json(results[0]);
+    });
+});
+
+// POST (Create) a new product type
+app.post('/api/types', (req, res) => {
+    const { CategoryID, TypeName } = req.body;
+    if (!CategoryID || !TypeName) {
+        return res.status(400).json({ message: 'CategoryID and TypeName are required' });
+    }
+    const sqlQuery = 'INSERT INTO product_type (CategoryID, TypeName) VALUES (?, ?)';
+    db.query(sqlQuery, [CategoryID, TypeName], (err, result) => {
+        if (err) {
+            console.error('Error creating product type:', err);
+            return res.status(500).json({ message: 'An error occurred while creating the product type.' });
+        }
+        res.status(201).json({
+            message: 'Product type created successfully',
+            type: {
+                TypeId: result.insertId,
+                CategoryID,
+                TypeName,
+                CreatedAt: new Date().toISOString(),
+                UpdatedAt: new Date().toISOString()
+            }
+        });
+    });
+});
+
+// PUT (Update) an existing product type
+app.put('/api/types/:id', (req, res) => {
+    const { id } = req.params;
+    const { CategoryID, TypeName } = req.body;
+
+    let updateFields = [];
+    let queryParams = [];
+
+    if (CategoryID !== undefined) { updateFields.push('CategoryID = ?'); queryParams.push(CategoryID); }
+    if (TypeName !== undefined) { updateFields.push('TypeName = ?'); queryParams.push(TypeName); }
+    updateFields.push('UpdatedAt = NOW()');
+
+    if (updateFields.length === 1 && updateFields[0].includes('UpdatedAt')) { // Only UpdatedAt is present
+        return res.status(400).json({ message: 'No fields provided for update' });
+    }
+
+    queryParams.push(id);
+
+    const sqlQuery = `UPDATE product_type SET ${updateFields.join(', ')} WHERE TypeId = ?`;
+
+    db.query(sqlQuery, queryParams, (err, result) => {
+        if (err) {
+            console.error(`Error updating product type with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while updating the product type.' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Product type not found or no changes made' });
+        }
+        db.query('SELECT TypeId, CategoryID, TypeName, CreatedAt, UpdatedAt FROM product_type WHERE TypeId = ?', [id], (err, updatedRows) => {
+            if (err) {
+                console.error(`Error fetching updated product type with ID ${id}:`, err);
+                return res.status(500).json({ message: 'An error occurred while fetching the updated product type.' });
+            }
+            res.json({
+                message: 'Product type updated successfully',
+                type: updatedRows[0]
+            });
+        });
+    });
+});
+// DELETE a product type
+app.delete('/api/types/:id', (req, res) => {
+    const { id } = req.params;
+    const sqlQuery = 'DELETE FROM product_type WHERE TypeId = ?';
+    db.query(sqlQuery, [id], (err, result) => {
+        if (err) {
+            console.error(`Error deleting product type with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while deleting the product type.' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Product type not found' });
+        }
+        res.status(200).json({ message: 'Product type deleted successfully' });
+    });
+});
+
+
+// --- PRODUCT BRAND Endpoints ---
+
+// GET all product brands
+app.get('/api/brands', (req, res) => {
+    const sqlQuery = 'SELECT BrandId, BrandName, CreatedAt, UpdatedAt FROM product_brand';
+    db.query(sqlQuery, (err, results) => {
+        if (err) {
+            console.error('Error fetching product brands:', err);
+            return res.status(500).json({ message: 'An error occurred while fetching product brands.' });
+        }
+        res.json(results);
+    });
+});
+
+
+// GET product brand by ID
+app.get('/api/brands/:id', (req, res) => {
+    const { id } = req.params;
+    const sqlQuery = 'SELECT BrandId, BrandName, CreatedAt, UpdatedAt FROM product_brand WHERE BrandId = ?';
+    db.query(sqlQuery, [id], (err, results) => {
+        if (err) {
+            console.error(`Error fetching product brand with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while fetching the product brand.' });
+        }
+        if (results.length === 0) {
+            return res.status(404).json({ message: 'Product brand not found' });
+        }
+        res.json(results[0]);
+    });
+});
+
+// POST (Create) a new product brand
+app.post('/api/brands', (req, res) => {
+    const { BrandName } = req.body;
+    if (!BrandName) {
+        return res.status(400).json({ message: 'BrandName is required' });
+    }
+    const sqlQuery = 'INSERT INTO product_brand (BrandName) VALUES (?)';
+    db.query(sqlQuery, [BrandName], (err, result) => {
+        if (err) {
+            console.error('Error creating product brand:', err);
+            return res.status(500).json({ message: 'An error occurred while creating the product brand.' });
+        }
+        res.status(201).json({
+            message: 'Product brand created successfully',
+            brand: {
+                BrandId: result.insertId,
+                BrandName,
+                CreatedAt: new Date().toISOString(),
+                UpdatedAt: new Date().toISOString()
+            }
+        });
+    });
+});
+
+
+// PUT (Update) an existing product brand
+app.put('/api/brands/:id', (req, res) => {
+    const { id } = req.params;
+    const { BrandName } = req.body;
+
+    if (!BrandName) {
+        return res.status(400).json({ message: 'BrandName is required for update' });
+    }
+
+    const sqlQuery = 'UPDATE product_brand SET BrandName = ?, UpdatedAt = NOW() WHERE BrandId = ?';
+    db.query(sqlQuery, [BrandName, id], (err, result) => {
+        if (err) {
+            console.error(`Error updating product brand with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while updating the product brand.' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Product brand not found or no changes made' });
+        }
+        db.query('SELECT BrandId, BrandName, CreatedAt, UpdatedAt FROM product_brand WHERE BrandId = ?', [id], (err, updatedRows) => {
+            if (err) {
+                console.error(`Error fetching updated product brand with ID ${id}:`, err);
+                return res.status(500).json({ message: 'An error occurred while fetching the updated product brand.' });
+            }
+            res.json({
+                message: 'Product brand updated successfully',
+                brand: updatedRows[0]
+            });
+        });
+    });
+});
+
+
+// DELETE a product brand
+app.delete('/api/brands/:id', (req, res) => {
+    const { id } = req.params;
+    const sqlQuery = 'DELETE FROM product_brand WHERE BrandId = ?';
+    db.query(sqlQuery, [id], (err, result) => {
+        if (err) {
+            console.error(`Error deleting product brand with ID ${id}:`, err);
+            return res.status(500).json({ message: 'An error occurred while deleting the product brand.' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Product brand not found' });
+        }
+        res.status(200).json({ message: 'Product brand deleted successfully' });
+    });
+});
+
 
 
 app.post('/api/place-order', async (req, res) => {
@@ -525,7 +863,8 @@ app.get('/api/products-with-images/:productId', (req, res) => {
           p.ProductName,
           p.ProductDescription,
           p.Price,
-          p.Brand,
+          p.BrandID,
+          p.TypeID,
           p.Dimensions,
           p.Weight,
           p.IsAvailable,
@@ -558,7 +897,9 @@ app.get('/api/products-with-images/:productId', (req, res) => {
             ProductName: results[0].ProductName,
             ProductDescription: results[0].ProductDescription,
             Price: results[0].Price,
-            Brand: results[0].Brand,
+            BrandID: results[0].BrandID,
+            TypeID: results[0].TypeID,
+
             Dimensions: results[0].Dimensions,
             Weight: results[0].Weight,
             IsAvailable: results[0].IsAvailable,
@@ -905,7 +1246,8 @@ app.get('---/api/products-with-images', (req, res) => { // Renamed endpoint
           p.\`ProductName\`,
           p.\`ProductDescription\`,
           p.\`Price\`,
-          p.\`Brand\`,
+          p.\`BrandID\`,
+          p.\`TypeID\`,
           p.\`Dimensions\`,
           p.\`Weight\`,
           p.\`IsAvailable\`,
@@ -952,7 +1294,8 @@ app.get('/api/products-with-images', (req, res) => {
             p.ProductName,
             p.ProductDescription,
             p.Price,
-            p.Brand,
+            p.BrandID,
+            p.TypeID,
             p.Dimensions,
             p.Weight,
             p.IsAvailable,
@@ -1000,7 +1343,8 @@ app.get('/api/products', (req, res) => {
           \`product\`.\`ProductName\`,
           \`product\`.\`ProductDescription\`,
           \`product\`.\`Price\`,
-          \`product\`.\`Brand\`,
+          \`product\`.\`BrandID\`,
+          \`product\`.\`TypeID\`,
           \`product\`.\`Dimensions\`,
           \`product\`.\`Weight\`,
           \`product\`.\`IsAvailable\`,
@@ -1034,7 +1378,8 @@ app.get('/api/products/:productId', (req, res) => {
           \`product\`.\`ProductName\`,
           \`product\`.\`ProductDescription\`,
           \`product\`.\`Price\`,
-          \`product\`.\`Brand\`,
+          \`product\`.\`BrandID\`,
+         \`product\`.\`TypeID\`,
           \`product\`.\`Dimensions\`,
           \`product\`.\`Weight\`,
           \`product\`.\`IsAvailable\`,
@@ -1072,7 +1417,8 @@ app.post('/api/products', (req, res) => {
         ProductName,
         ProductDescription,
         Price,
-        Brand,
+        BrandID,
+        TypeID,
         Dimensions,
         Weight,
         IsAvailable, // Assuming boolean or tinyint in DB
@@ -1091,12 +1437,13 @@ app.post('/api/products', (req, res) => {
           \`ProductName\`,
           \`ProductDescription\`,
           \`Price\`,
-          \`Brand\`,
+          \`BrandID\`,
+          \`TypeID\`,
           \`Dimensions\`,
           \`Weight\`,
           \`IsAvailable\`,
           \`StockQuantity\`
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?);
     `;
 
     // Values to be inserted, corresponding to the placeholders
@@ -1105,7 +1452,8 @@ app.post('/api/products', (req, res) => {
         ProductName,
         ProductDescription || null, // Optional fields can be null
         Price,
-        Brand || null,
+        BrandID || null,
+        TypeID || null,
         Dimensions || null,
         Weight || null,
         IsAvailable === undefined ? 1 : IsAvailable, // Default IsAvailable to 1 (true) if not provided
@@ -1151,7 +1499,8 @@ app.put('/api/products/:productId', (req, res) => {
             'ProductName',
             'ProductDescription',
             'Price',
-            'Brand',
+            'BrandID',
+            'TypeID',
             'Dimensions',
             'Weight',
             'IsAvailable',
@@ -1222,7 +1571,7 @@ app.delete('/api/products/:productId', (req, res) => {
 
 
 
-app.get('/api/categories', (req, res) => {
+app.get('/api/categoriess', (req, res) => {
     // SQL query to fetch categories as provided by the user
     const sqlQuery = `
       SELECT
@@ -1252,7 +1601,7 @@ app.get('/api/categories', (req, res) => {
 });
 
 
-app.post('/api/categories', (req, res) => {
+app.post('/api/categoriess', (req, res) => {
     // Extract category data from the request body
     const { Name, Description, Image, ParentCategoryId } = req.body;
 
@@ -1285,7 +1634,7 @@ app.post('/api/categories', (req, res) => {
 });
 
 
-app.put('/api/categories/:categoryId', (req, res) => {
+app.put('/api/categoriess/:categoryId', (req, res) => {
     // Get the category ID from the URL parameters
     const categoryId = req.params.categoryId;
 
