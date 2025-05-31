@@ -570,8 +570,8 @@ app.post('/api/place-order', async (req, res) => {
     // Option 1 (Recommended): Save the delivery address to an address table first and get its ID.
     // Option 2 (Simpler for testing, if acceptable): Store the address string directly in the order table if you modify its structure.
     // For this update, I will use placeholder IDs (e.g., 1) and add comments.
-    const shippingAddrId = 3; // ** IMPORTANT: Replace with actual Shipping Address ID **
-    const billingAddrId = 7; // ** IMPORTANT: Replace with actual Billing Address ID (could be same as shipping) **
+    const shippingAddrId = 1; // ** IMPORTANT: Replace with actual Shipping Address ID **
+    const billingAddrId = null; // ** IMPORTANT: Replace with actual Billing Address ID (could be same as shipping) **
 
 
     let orderId;
@@ -638,7 +638,7 @@ app.post('/api/place-order', async (req, res) => {
         // This is a simplified example. Refer to PayFast documentation for all required fields.
         const payfastFormData = {
             merchant_id: PAYFAST_MERCHANT_ID,
-            // merchant_key: PAYFAST_MERCHANT_KEY, // merchant_key is typically NOT sent in the form
+            merchant_key: PAYFAST_MERCHANT_KEY,
             return_url: RETURN_URL,
             cancel_url: CANCEL_URL,
             notify_url: NOTIFY_URL,
@@ -646,7 +646,8 @@ app.post('/api/place-order', async (req, res) => {
             name_last: deliveryInfo.lastName,
             email_address: deliveryInfo.email,
             cell_number: deliveryInfo.phone, // Assuming phone maps to cell_number
-            m_indy: orderId, // Use orderId as a custom parameter to identify the order on return/notify
+            // m_indy: orderId, // Use orderId as a custom parameter to identify the order on return/notify
+            custom_int1: orderId,
             amount: grandTotal.toFixed(2), // Total amount with 2 decimal places
             item_name: `Order #${orderNumber}`, // Use the generated order number
             item_description: `Purchase from Pongola Store (Order #${orderNumber})`, // Use the generated order number
@@ -654,31 +655,16 @@ app.post('/api/place-order', async (req, res) => {
             // e.g., custom_str1, custom_int1, email_confirmation, confirmation_address, etc.
         };
 
+
+
         // --- Calculate PayFast Signature ---
         // The signature is calculated based on specific fields, ordered alphabetically, and using the passphrase.
         // ** IMPORTANT: Refer to PayFast documentation for the exact signature calculation method and fields **
         // This is a common method, but verify with PayFast's latest documentation.
         // The string to sign should include the passphrase at the end.
         // Fields to include in the signature string (alphabetical order):
-        const pfParamString = Object.keys(payfastFormData)
-            .filter(key => key !== 'signature') // Exclude signature itself
-            .sort()
-            .reduce((str, key) => {
-                // Ensure values are strings and properly encoded
-                const value = payfastFormData[key].toString();
-                str += `${key}=${encodeURIComponent(value.replace(/&/g, '%26')).replace(/%20/g, '+')}&`;
-                return str;
-            }, '');
 
-        // Append the passphrase
-        const signatureString = pfParamString + `passphrase=${encodeURIComponent(PAYFAST_PASSPHRASE.replace(/&/g, '%26')).replace(/%20/g, '+')}`;
-
-        // Calculate MD5 hash (PayFast typically uses MD5)
-        const signature = crypto.createHash('md5').update(signatureString).digest('hex');
-
-        // Add the calculated signature to the form data
-        payfastFormData.signature = signature;
-
+        console.log('PayFast Payload:', payfastFormData);
         // Respond to the frontend with the PayFast URL and form data
         res.json({ success: true, payfastUrl: PAYFAST_URL, payfastFormData: payfastFormData });
 
@@ -688,6 +674,8 @@ app.post('/api/place-order', async (req, res) => {
         return res.status(400).json({ message: 'Unsupported payment method selected.' });
     }
 });
+
+
 
 
 app.post('/api/payfast-itn', (req, res) => {
@@ -715,6 +703,7 @@ app.post('/api/payfast-itn', (req, res) => {
     }
 
 });
+
 
 
 app.get('/api/products/:productId/images', (req, res) => {
