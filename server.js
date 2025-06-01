@@ -115,10 +115,161 @@ const PAYFAST_PASSPHRASE = process.env.PAYFAST_PASSPHRASE;
 const PAYFAST_URL = 'https://sandbox.payfast.co.za/eng/process';
 
 
-const RETURN_URL = 'http://localhost:5173/OrderCanelled';
-const CANCEL_URL = 'http://localhost:5173/OrderSuccess';
+const RETURN_URL = 'http://localhost:5173/OrderSuccess';
+const CANCEL_URL = 'http://localhost:5173/OrderCanelled';
 const NOTIFY_URL = '';
 
+
+app.get('/api/addresses', (req, res) => {
+    const query = `
+        SELECT address.AddressId,
+               address.UserID,
+               address.AddressType,
+               address.Label,
+               address.MeantFor,
+               address.Address1,
+               address.Address2,
+               address.Country,
+               address.Province,
+               address.ZipCode,
+               address.CreatedAt
+        FROM gcinumus_PongolaSupplies_db.address;
+    `;
+    db.query(query, (error, results) => {
+        if (error) {
+            console.error('Error fetching all addresses:', error);
+            return res.status(500).json({ message: 'Failed to fetch addresses', error: error.message });
+        }
+        res.status(200).json(results);
+    });
+});
+
+// --- GET address by ID ---
+// Fetches a single address by its AddressId.
+app.get('/api/addresses/:id', (req, res) => {
+    const { id } = req.params;
+    const query = `
+        SELECT address.AddressId,
+               address.UserID,
+               address.AddressType,
+               address.Label,
+               address.MeantFor,
+               address.Address1,
+               address.Address2,
+               address.Country,
+               address.Province,
+               address.ZipCode,
+               address.CreatedAt
+        FROM gcinumus_PongolaSupplies_db.address
+        WHERE AddressId = ?;
+    `;
+    db.query(query, [id], (error, results) => {
+        if (error) {
+            console.error(`Error fetching address with ID ${req.params.id}:`, error);
+            return res.status(500).json({ message: 'Failed to fetch address', error: error.message });
+        }
+        if (results.length === 0) {
+            return res.status(404).json({ message: `Address with ID ${id} not found.` });
+        }
+        res.status(200).json(results[0]);
+    });
+});
+
+// --- POST (Create) a new address ---
+// Adds a new address to the 'address' table.
+app.post('/api/addresses', (req, res) => {
+    // Destructure required fields from request body
+    const { UserID, AddressType, Label, MeantFor, Address1, Address2, Country, Province, ZipCode } = req.body;
+
+    // Basic validation
+    if (!UserID || !AddressType || !Label || !MeantFor || !Address1 || !Country || !Province || !ZipCode) {
+        return res.status(400).json({ message: 'Missing required address fields.' });
+    }
+
+    const query = `
+        INSERT INTO gcinumus_PongolaSupplies_db.address
+        (UserID, AddressType, Label, MeantFor, Address1, Address2, Country, Province, ZipCode, CreatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW());
+    `;
+    db.query(query, [
+        UserID, AddressType, Label, MeantFor, Address1, Address2, Country, Province, ZipCode
+    ], (error, result) => {
+        if (error) {
+            console.error('Error creating address:', error);
+            return res.status(500).json({ message: 'Failed to create address', error: error.message });
+        }
+        res.status(201).json({
+            message: 'Address created successfully',
+            addressId: result.insertId,
+            data: req.body
+        });
+    });
+});
+
+// --- PUT (Update) an existing address ---
+// Updates an address by its AddressId.
+app.put('/api/addresses/:id', (req, res) => {
+    const { id } = req.params;
+    const { UserID, AddressType, Label, MeantFor, Address1, Address2, Country, Province, ZipCode } = req.body;
+
+    // At least one field should be provided for update
+    if (Object.keys(req.body).length === 0) {
+        return res.status(400).json({ message: 'No update fields provided.' });
+    }
+
+    // Build dynamic SET clause for the UPDATE query
+    const updates = [];
+    const values = [];
+    if (UserID !== undefined) { updates.push('UserID = ?'); values.push(UserID); }
+    if (AddressType !== undefined) { updates.push('AddressType = ?'); values.push(AddressType); }
+    if (Label !== undefined) { updates.push('Label = ?'); values.push(Label); }
+    if (MeantFor !== undefined) { updates.push('MeantFor = ?'); values.push(MeantFor); }
+    if (Address1 !== undefined) { updates.push('Address1 = ?'); values.push(Address1); }
+    if (Address2 !== undefined) { updates.push('Address2 = ?'); values.push(Address2); }
+    if (Country !== undefined) { updates.push('Country = ?'); values.push(Country); }
+    if (Province !== undefined) { updates.push('Province = ?'); values.push(Province); }
+    if (ZipCode !== undefined) { updates.push('ZipCode = ?'); values.push(ZipCode); }
+
+    if (updates.length === 0) {
+        return res.status(400).json({ message: 'No valid fields to update.' });
+    }
+
+    const query = `
+        UPDATE gcinumus_PongolaSupplies_db.address
+        SET ${updates.join(', ')}
+        WHERE AddressId = ?;
+    `;
+    db.query(query, [...values, id], (error, result) => {
+        if (error) {
+            console.error(`Error updating address with ID ${req.params.id}:`, error);
+            return res.status(500).json({ message: 'Failed to update address', error: error.message });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: `Address with ID ${id} not found or no changes made.` });
+        }
+        res.status(200).json({ message: `Address with ID ${id} updated successfully.`, affectedRows: result.affectedRows });
+    });
+});
+
+// --- DELETE an address ---
+// Deletes an address by its AddressId.
+app.delete('/api/addresses/:id', (req, res) => {
+    const { id } = req.params;
+    const query = `
+        DELETE FROM gcinumus_PongolaSupplies_db.address
+        WHERE AddressId = ?;
+    `;
+    db.query(query, [id], (error, result) => {
+        if (error) {
+            console.error(`Error deleting address with ID ${req.params.id}:`, error);
+            return res.status(500).json({ message: 'Failed to delete address', error: error.message });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: `Address with ID ${id} not found.` });
+        }
+        res.status(200).json({ message: `Address with ID ${id} deleted successfully.`, affectedRows: result.affectedRows });
+    });
+});
 
 app.get('/api/categories', (req, res) => {
     const sqlQuery = 'SELECT CategoryId, Name, Description, Image, ParentCategoryId, CreatedAt, UpdatedAt FROM category';
@@ -559,7 +710,7 @@ app.post('/api/place-order', async (req, res) => {
     `;
     // Assuming you have a way to get the UserID (e.g., from authenticated user session)
     // For now, using a placeholder UserID = 1. You need to replace this.
-    const userId = 138; // ** IMPORTANT: Replace with actual User ID from user session **
+    const userId = deliveryInfo.userID; // ** IMPORTANT: Replace with actual User ID from user session **
 
     // Generate a unique Order Number (example: using timestamp or a library like uuid)
     const orderNumber = `ORD-${Date.now()}`; // Example simple order number
@@ -570,7 +721,7 @@ app.post('/api/place-order', async (req, res) => {
     // Option 1 (Recommended): Save the delivery address to an address table first and get its ID.
     // Option 2 (Simpler for testing, if acceptable): Store the address string directly in the order table if you modify its structure.
     // For this update, I will use placeholder IDs (e.g., 1) and add comments.
-    const shippingAddrId = 1; // ** IMPORTANT: Replace with actual Shipping Address ID **
+    const shippingAddrId = deliveryInfo.selectedAddressId; // ** IMPORTANT: Replace with actual Shipping Address ID **
     const billingAddrId = null; // ** IMPORTANT: Replace with actual Billing Address ID (could be same as shipping) **
 
 
@@ -1683,12 +1834,43 @@ app.put('/api/categoriess/:categoryId', (req, res) => {
 });
 
 
+
+app.put('/updateUser_login_single/:UserId', (req, res) => {
+    const userId = req.params.UserId;
+    const {
+        HomeAddressID
+    } = req.body;
+
+    const query = `
+        UPDATE user_tb 
+        SET 
+           
+            HomeAddressID=?
+            
+        WHERE UserId = ?`;
+
+    const values = [
+        HomeAddressID, userId
+    ];
+
+    db.query(query, values, (err, result) => {
+        if (err) {
+            console.error('Error updating user:', err);
+            return res.status(500).json({ message: 'Error updating user home address' });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.status(200).json({ message: 'User address updated successfully' });
+    });
+});
+
 app.put('/updateUser_login/:UserId', (req, res) => {
     const userId = req.params.UserId;
     const {
         Name, Surname, IdNumber,
         Gender, Email, PhoneNumber, FaceImage,
-        Password, ConfirmedUser, Role
+        Password, ConfirmedUser, Role, HomeAddressID
     } = req.body;
 
     const query = `
@@ -1704,14 +1886,15 @@ app.put('/updateUser_login/:UserId', (req, res) => {
             FaceImage = ?, 
             Password = ?, 
             ConfirmedUser = ?, 
-            Role = ?
+            Role = ?,
+            HomeAddressID=?
             
         WHERE UserId = ?`;
 
     const values = [
         Name, Surname, IdNumber,
         Gender, Email, PhoneNumber, FaceImage,
-        Password, ConfirmedUser, Role, userId
+        Password, ConfirmedUser, Role, HomeAddressID, userId
     ];
 
     db.query(query, values, (err, result) => {
@@ -1982,11 +2165,84 @@ app.get('/user_tb/:userId', (req, res) => {
 //     }
 // });
 
+// app.post("/new_user_register", upload.fields([{ name: 'FaceImage' }]), async (req, res) => {
+//     const {
+//         Name, Surname, IdNumber, PassportNumber, Country,
+//         Gender, Email, PhoneNumber, Password, DateOfBirth,
+//         AddressType, Label, MeantFor, Address1, Address2, Country, Province, ZipCode
+//     } = req.body;
+
+//     const faceImagePath = req.files?.FaceImage?.[0]?.filename
+//         ? `/ID_uploads/${req.files.FaceImage[0].filename}`
+//         : null;
+
+//     try {
+//         const hashedPassword = await bcrypt.hash(Password, 10);
+
+//         // Step 1: Insert user without HomeAddress for now
+//         let userQuery, userParams;
+
+//         if (IdNumber) {
+//             userQuery = `
+//           INSERT INTO user_tb 
+//           (Name, Surname, IdNumber, Gender, Email, PhoneNumber, FaceImage, Password, Role, ConfirmedUser, DateOfBirth)
+//           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'User', false, ?)
+//         `;
+//             userParams = [Name, Surname, IdNumber, Gender, Email.toLowerCase(), PhoneNumber, faceImagePath, hashedPassword, DateOfBirth];
+//         } else if (PassportNumber && Country) {
+//             userQuery = `
+//           INSERT INTO user_tb 
+//           (Name, Surname, PassportNumber, Country, Gender, Email, PhoneNumber, FaceImage, Password, Role, ConfirmedUser, DateOfBirth)
+//           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'User', false, ?)
+//         `;
+//             userParams = [Name, Surname, PassportNumber, Country, Gender, Email.toLowerCase(), PhoneNumber, faceImagePath, hashedPassword, DateOfBirth];
+//         } else {
+//             return res.status(400).json({ message: "Either ID number or Passport number and Country must be provided" });
+//         }
+
+//         db.query(userQuery, userParams, (userErr, userResult) => {
+//             if (userErr) return res.status(500).json({ error: userErr.message });
+
+//             const newUserId = userResult.insertId;
+
+//             // Step 2: Insert address linked to user
+//             const addressQuery = `
+//           INSERT INTO address (
+//             UserID, AddressType, Label, MeantFor, Address1, Address2, Country, Province, ZipCode
+//           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+//         `;
+//             const addressParams = [
+//                 newUserId, AddressType, Label, MeantFor,
+//                 Address1, Address2 || '', Country, Province, ZipCode
+//             ];
+
+//             db.query(addressQuery, addressParams, (addrErr, addrResult) => {
+//                 if (addrErr) return res.status(500).json({ error: addrErr.message });
+
+//                 const newAddressId = addrResult.insertId;
+
+//                 // Step 3: Update user with address reference
+//                 db.query(
+//                     "UPDATE user_tb SET HomeAddressID = ? WHERE UserId = ?",
+//                     [newAddressId, newUserId],
+//                     (updateErr) => {
+//                         if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+//                         res.status(201).json({ message: "User and address created successfully" });
+//                     }
+//                 );
+//             });
+//         });
+//     } catch (error) {
+//         return res.status(500).json({ error: error.message });
+//     }
+// });
+
 app.post("/new_user_register", upload.fields([{ name: 'FaceImage' }]), async (req, res) => {
     const {
         Name, Surname, IdNumber, PassportNumber, Country,
-        Gender, Email, PhoneNumber, Password, DateOfBirth,
-        AddressType, Label, MeantFor, Address1, Address2, City, Province, ZipCode
+        Gender, Email, PhoneNumber, Password, DateOfBirth
+        // Removed: AddressType, Label, MeantFor, Address1, Address2, Country, Province, ZipCode
     } = req.body;
 
     const faceImagePath = req.files?.FaceImage?.[0]?.filename
@@ -1996,65 +2252,57 @@ app.post("/new_user_register", upload.fields([{ name: 'FaceImage' }]), async (re
     try {
         const hashedPassword = await bcrypt.hash(Password, 10);
 
-        // Step 1: Insert user without HomeAddress for now
+        // Step 1: Insert user details only (without any address fields)
         let userQuery, userParams;
 
-        if (IdNumber) {
+        if (Name) {
             userQuery = `
-          INSERT INTO user_tb 
-          (Name, Surname, IdNumber, Gender, Email, PhoneNumber, FaceImage, Password, Role, ConfirmedUser, DateOfBirth)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'User', false, ?)
-        `;
-            userParams = [Name, Surname, IdNumber, Gender, Email.toLowerCase(), PhoneNumber, faceImagePath, hashedPassword, DateOfBirth];
-        } else if (PassportNumber && Country) {
-            userQuery = `
-          INSERT INTO user_tb 
-          (Name, Surname, PassportNumber, Country, Gender, Email, PhoneNumber, FaceImage, Password, Role, ConfirmedUser, DateOfBirth)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'User', false, ?)
-        `;
-            userParams = [Name, Surname, PassportNumber, Country, Gender, Email.toLowerCase(), PhoneNumber, faceImagePath, hashedPassword, DateOfBirth];
-        } else {
+                INSERT INTO user_tb
+                (Name, Surname, IdNumber, Gender, Email, PhoneNumber, FaceImage, Password, Role, ConfirmedUser, DateOfBirth)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'User', false, ?)
+            `;
+            userParams = [Name, Surname, IdNumber, Gender, Email.toLowerCase(), PhoneNumber, faceImagePath, hashedPassword, DateOfBirth || null];
+        }
+
+        // else if (PassportNumber && Country) {
+        //     userQuery = `
+        //         INSERT INTO user_tb
+        //         (Name, Surname, PassportNumber, Country, Gender, Email, PhoneNumber, FaceImage, Password, Role, ConfirmedUser, DateOfBirth)
+        //         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'User', false, ?)
+        //     `;
+        //     userParams = [Name, Surname, PassportNumber, Country, Gender, Email.toLowerCase(), PhoneNumber, faceImagePath, hashedPassword, DateOfBirth];
+        // }
+        else {
             return res.status(400).json({ message: "Either ID number or Passport number and Country must be provided" });
         }
 
-        db.query(userQuery, userParams, (userErr, userResult) => {
-            if (userErr) return res.status(500).json({ error: userErr.message });
-
-            const newUserId = userResult.insertId;
-
-            // Step 2: Insert address linked to user
-            const addressQuery = `
-          INSERT INTO address (
-            UserID, AddressType, Label, MeantFor, Address1, Address2, City, Province, ZipCode
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `;
-            const addressParams = [
-                newUserId, AddressType, Label, MeantFor,
-                Address1, Address2 || '', City, Province, ZipCode
-            ];
-
-            db.query(addressQuery, addressParams, (addrErr, addrResult) => {
-                if (addrErr) return res.status(500).json({ error: addrErr.message });
-
-                const newAddressId = addrResult.insertId;
-
-                // Step 3: Update user with address reference
-                db.query(
-                    "UPDATE user_tb SET HomeAddressID = ? WHERE UserId = ?",
-                    [newAddressId, newUserId],
-                    (updateErr) => {
-                        if (updateErr) return res.status(500).json({ error: updateErr.message });
-
-                        res.status(201).json({ message: "User and address created successfully" });
-                    }
-                );
+        // Using the promisified query function for consistency and better error handling
+        const userResult = await new Promise((resolve, reject) => {
+            db.query(userQuery, userParams, (userErr, result) => {
+                if (userErr) return reject(userErr);
+                resolve(result);
             });
         });
+
+        const newUserId = userResult.insertId;
+
+        // Removed Step 2: Insert address linked to user
+        // Removed Step 3: Update user with address reference
+
+        // Respond with success for user creation
+        res.status(201).json({ message: "User registered successfully", userId: newUserId });
+
     } catch (error) {
-        return res.status(500).json({ error: error.message });
+        console.error('Error during user registration:', error);
+        // Check for duplicate entry error specifically
+        if (error.code === 'ER_DUP_ENTRY') {
+            // You might want to parse the error message to be more specific
+            // e.g., "Duplicate entry 'email@example.com' for key 'Email_UNIQUE'"
+            return res.status(409).json({ message: "User with this email or ID/Passport number already exists." });
+        }
+        return res.status(500).json({ error: error.message || "An unexpected error occurred during registration." });
     }
 });
-
 
 app.post('/loginn', (req, res) => {
     const { Email, Password } = req.body;
