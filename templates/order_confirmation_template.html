@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Order Confirmation</title>
+    <style>
+        /* Basic Reset & Body */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f5f9ff;
+            color: #111;
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+            width: 100% !important;
+        }
+
+        /* Container Table */
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #eaeaea;
+        }
+
+        /* Header */
+        .header {
+            background-color: #000c66;
+            color: #fff;
+            padding: 30px 40px;
+            text-align: left;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.2;
+        }
+
+        .header p {
+            margin: 10px 0 0;
+            font-size: 16px;
+            line-height: 1.5;
+        }
+
+        /* Section Padding */
+        .section-padding {
+            padding: 30px 40px;
+        }
+
+        .section-padding-sm {
+            padding: 20px 40px;
+        }
+
+        /* Headings */
+        h2 {
+            margin-top: 0;
+            color: #000c66;
+            font-size: 22px;
+            line-height: 1.3;
+        }
+
+        h3 {
+            margin-top: 0;
+            color: #000c66;
+            font-size: 18px;
+            line-height: 1.4;
+        }
+
+        /* Tables */
+        table {
+            border-collapse: collapse;
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+
+        th,
+        td {
+            padding: 10px;
+            text-align: left;
+            font-size: 14px;
+            color: #333333;
+            vertical-align: top;
+        }
+
+        .summary-table th {
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 15px;
+            font-weight: bold;
+            color: #000000;
+        }
+
+        .summary-table td {
+            padding-top: 15px;
+            padding-bottom: 15px;
+        }
+
+        .summary-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Item Row Specifics */
+        .item-row {
+            padding: 10px 0;
+            border-bottom: 1px solid #eeeeee;
+        }
+
+        .item-row img {
+            display: block;
+            border-radius: 5px;
+            border: 1px solid #dddddd;
+        }
+
+        /* Total Row */
+        .total-row td {
+            font-size: 18px;
+            font-weight: bold;
+            color: #000000;
+            border-top: 2px solid #000c66;
+            /* Stronger line for total */
+            padding-top: 15px;
+        }
+
+        /* Footer */
+        .footer {
+            padding: 20px 40px;
+            font-size: 13px;
+            color: #777;
+            text-align: center;
+        }
+
+        .footer a {
+            color: #000c66;
+            text-decoration: underline;
+        }
+
+        /* Buttons */
+        .button {
+            display: inline-block;
+            background-color: #000c66;
+            color: #ffffff;
+            padding: 12px 25px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+
+        /* Responsive Styles */
+        @media only screen and (max-width: 600px) {
+            .email-container {
+                width: 100% !important;
+                border-radius: 0;
+                border: none;
+            }
+
+            .header,
+            .section-padding,
+            .section-padding-sm,
+            .footer {
+                padding: 20px !important;
+            }
+
+            .header h1 {
+                font-size: 24px !important;
+            }
+
+            .header p {
+                font-size: 14px !important;
+            }
+
+            .summary-table th,
+            .summary-table td {
+                padding: 8px !important;
+            }
+
+            .item-row td {
+                display: block;
+                width: 100%;
+                text-align: center;
+                padding: 5px 0 !important;
+            }
+
+            .item-row td:first-child {
+                padding-bottom: 10px !important;
+            }
+
+            .item-row img {
+                margin: 0 auto 10px;
+            }
+
+            .item-row .flex-1 {
+                text-align: center !important;
+            }
+
+            .item-row .text-sm {
+                padding-top: 5px;
+            }
+        }
+    </style>
+</head>
+
+<body style="margin: 0; font-family: Arial, sans-serif; background: #f5f9ff; color: #111;">
+    <table width="100%" cellspacing="0" cellpadding="0" style="background: #f5f9ff;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table class="email-container" width="600" cellspacing="0" cellpadding="0" border="0"
+                    style="max-width: 100%; border: 1px solid #eaeaea; border-radius: 12px; overflow: hidden; background-color: #ffffff;">
+                    <tr>
+                        <td colspan="2" class="header">
+                            <h1 style="margin: 0; display: inline-block; vertical-align: middle;">
+                                <img src="https://res.cloudinary.com/deoxng3in/image/upload/v1748905008/logo_vtlkhj.png"
+                                    alt="Pongola" width="100" height="100"
+                                    style="vertical-align: middle; margin-right: 10px;">
+
+                                Order Confirmation
+                            </h1>
+                            <p style="margin: 10px 0 0;">
+                                Hi <strong>{{customerName}}</strong>,
+                            </p>
+                            <p style="margin: 6px 0 0; font-size: 14px;">Thanks for shopping with us! We’ve received
+                                your order.</p>
+                            <p style="margin: 6px 0 0; font-size: 14px;">Order Number: <strong>#{{orderNumber}}</strong>
+                            </p>
+                            <p style="margin: 6px 0 0; font-size: 14px;">Order Date: <strong>{{orderDate}}</strong></p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td colspan="2" class="section-padding">
+                            <h2 style="margin-top: 0;">Order Summary</h2>
+
+                            <table class="summary-table" width="100%" cellspacing="0" cellpadding="0" border="0"
+                                style="border-collapse: collapse;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid #ddd;">
+                                        <th align="left" style="padding-bottom: 15px;">Item</th>
+                                        <th align="right" style="padding-bottom: 15px;">Price</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {{itemRows}}
+                                </tbody>
+                                <tfoot>
+                                    <tr style="border-top: 1px solid #eee;">
+                                        <td style="padding-top: 15px;">Item Cost:</td>
+                                        <td align="right" style="padding-top: 15px;">R{{itemCost}}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Shipping:</td>
+                                        <td align="right">R{{shippingCost}}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Tax:</td>
+                                        <td align="right">R{{taxAmount}}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Coupon:</td>
+                                        <td align="right" style="color: green;">- R{{couponAmount}}</td>
+                                    </tr>
+                                    <tr class="total-row">
+                                        <td style="padding-top: 20px;"><strong>Order Total:</strong></td>
+                                        <td align="right" style="padding-top: 20px;"><strong>R{{totalCost}}</strong>
+                                        </td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <tr style="background-color: #f5f9ff;">
+                        <td colspan="2" class="section-padding-sm">
+                            <h3 style="margin-top: 0;">Delivery Info</h3>
+                            <p style="margin: 0 0 5px;">Delivery Method: {{deliveryMethod}}</p>
+                            <p style="margin: 0;">Estimated Delivery: {{estimatedDeliveryDate}}</p>
+                            <p style="margin: 5px 0 0;">Address: {{billingAddressLine1}}, {{billingAddressLine2}}</p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td colspan="2" class="section-padding" align="center">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width: 100%;">
+                                <tr>
+                                    <td align="center" style="padding-bottom: 10px;">
+                                        <a href="{{trackOrderLink}}" class="button"
+                                            style="background-color: #000c66; color: #ffffff; padding: 12px 25px; border-radius: 5px; text-decoration: none; font-weight: bold; font-size: 16px;">
+                                            Track Your Order
+                                        </a>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="padding-top: 10px;">
+                                        <a href="{{continueShoppingLink}}"
+                                            style="color: #000c66; text-decoration: underline; font-size: 14px;">
+                                            Continue Shopping
+                                        </a>
+                                        &nbsp; &bull; &nbsp;
+                                        <a href="{{downloadInvoiceLink}}"
+                                            style="color: #000c66; text-decoration: underline; font-size: 14px;">
+                                            Download Invoice
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td colspan="2" class="footer">
+                            <p style="margin: 0;">
+                                Need help? Contact us at
+                                <a href="mailto:admin@cleanpongola.co.za"
+                                    style="color: #000c66;">admin@cleanpongola.co.za</a>
+                            </p>
+                            <p style="margin: 5px 0 0;">&copy; {{currentYear}} Pongola Cleaning Supplies. All rights
+                                reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+
+</html>

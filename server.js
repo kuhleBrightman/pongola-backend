@@ -69,6 +69,14 @@ if (!fs.existsSync(uploadDir)) {
 }
 app.use('/uploads', express.static(uploadDir));
 
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    // port: 465,
+    auth: {
+        user: process.env.Email_USER,
+        pass: process.env.Email_PASS
+    }
+});
 
 // const storage2 = multer.diskStorage({
 //     destination: function (req, file, cb) {
@@ -119,6 +127,706 @@ const RETURN_URL = 'http://localhost:5173/OrderSuccess';
 const CANCEL_URL = 'http://localhost:5173/OrderCanelled';
 const NOTIFY_URL = '';
 
+
+// Sending confirmation
+const fsp = require('fs').promises;
+async function getEmailHtml(templateName, data) {
+    const templatePath = path.join(__dirname, 'templates', templateName);
+    let html = await fsp.readFile(templatePath, { encoding: 'utf8' });
+
+    // Replace general placeholders
+    for (const key in data) {
+        if (data.hasOwnProperty(key)) {
+            const placeholder = new RegExp(`{{${key}}}`, 'g');
+            html = html.replace(placeholder, data[key]);
+        }
+    }
+
+    // Handle dynamic item rows
+    if (data.items && Array.isArray(data.items)) {
+        let itemRowsHtml = '';
+        const itemRowTemplate = `
+            <tr>
+                <td class="item-row" style="padding: 10px 0; border-bottom: 1px solid #eeeeee;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt;">
+                        <tr>
+                            <td width="60" valign="top" style="padding-right: 15px;">
+                                <img src="{{itemImage}}" alt="{{itemName}}" width="60" height="60" style="display: block; border-radius: 5px; border: 1px solid #dddddd;">
+                            </td>
+                            <td valign="top" style="font-size: 14px; color: #333333;">
+                                <strong style="color: #000000;">{{itemName}}</strong><br>
+                                <span style="font-size: 12px; color: #777777;">Qty: {{itemQty}}</span>
+                            </td>
+                            <td align="right" valign="top" style="font-size: 14px; font-weight: bold; color: #000000;">
+                               R<span>{{itemPrice}}</span>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        `;
+
+        data.items.forEach(item => {
+            let currentRowHtml = itemRowTemplate;
+            currentRowHtml = currentRowHtml.replace(/{{itemImage}}/g, item.Image_url || 'https://placehold.co/60x60/e0e0e0/000000?text=Product');
+            currentRowHtml = currentRowHtml.replace(/{{itemName}}/g, item.ProductName);
+            currentRowHtml = currentRowHtml.replace(/{{itemQty}}/g, item.Quantity);
+            currentRowHtml = currentRowHtml.replace(/{{itemPrice}}/g, item.SubTotal.toFixed(2)); // Use SubTotal for item price
+            itemRowsHtml += currentRowHtml;
+        });
+        html = html.replace('{{itemRows}}', itemRowsHtml);
+    } else {
+        html = html.replace('{{itemRows}}', ''); // Remove placeholder if no items
+    }
+
+    return html;
+}
+
+async function getComprehensiveOrderDetails(orderId) {
+    // Fetch main order details and join with user details
+    const orderQuery = `
+        SELECT
+            o.OrderID, o.UserID, o.OrderNumber, o.OrderDate, o.ShippingAddrID, o.BillingAddrID,
+            o.TotalAmount, o.OrderStatus, o.PaymentStatus, o.CreatedAt AS OrderCreatedAt, o.UpdatedAt AS OrderUpdatedAt,
+            u.Name AS UserName, u.Surname AS UserSurname, u.Email AS UserEmail, u.PhoneNumber AS UserPhone
+        FROM gcinumus_PongolaSupplies_db.order o
+        JOIN gcinumus_PongolaSupplies_db.user_tb u ON o.UserID = u.UserId
+        WHERE o.OrderID = ?;
+    `;
+    const orderRows = await queryAsync(orderQuery, [orderId]);
+
+    if (orderRows.length === 0) {
+        throw new Error('Order not found.');
+    }
+    const order = orderRows[0];
+
+    // Fetch order items for this order, joining with product_image
+    const itemsQuery = `
+        SELECT
+            oi.ItemId, oi.ProductID, oi.ProductName, oi.ProductDescription, oi.PricePerItem, oi.Quantity, oi.SubTotal, oi.ItemStatus, oi.ShippingTrackerNumber,
+            pi.Image_url
+        FROM gcinumus_PongolaSupplies_db.order_items oi
+        LEFT JOIN gcinumus_PongolaSupplies_db.product_image pi ON oi.ProductID = pi.ProductID
+        WHERE oi.OrderID = ?
+        ORDER BY pi.SortOrder ASC, pi.ImageId ASC;
+    `;
+    const items = await queryAsync(itemsQuery, [orderId]);
+
+    // Fetch shipping address details
+    let shippingAddress = null;
+    if (order.ShippingAddrID) {
+        const addressQuery = `
+            SELECT AddressId, Address1, Address2, CityOrSuburb, Province, ZipCode, Country, Label, AddressType, CreatedAt
+            FROM gcinumus_PongolaSupplies_db.address
+            WHERE AddressId = ?;
+        `;
+        const addressRows = await queryAsync(addressQuery, [order.ShippingAddrID]);
+        if (addressRows.length > 0) {
+            shippingAddress = addressRows[0];
+        }
+    }
+
+    // Calculate Delivery Fee and Tax Amount (as per your existing logic)
+    const calculatedItemsSubTotal = items.reduce((sum, item) => sum + item.SubTotal, 0);
+    let deliveryFee = 0;
+    let taxAmount = 0;
+
+    if (order.TotalAmount > calculatedItemsSubTotal) {
+        deliveryFee = 2.00; // Example fixed delivery fee
+        taxAmount = order.TotalAmount - calculatedItemsSubTotal - deliveryFee;
+        if (taxAmount < 0) taxAmount = 0;
+    }
+
+    return {
+        OrderID: order.OrderID,
+        OrderNumber: order.OrderNumber,
+        OrderDate: order.OrderDate,
+        TotalAmount: order.TotalAmount,
+        OrderStatus: order.OrderStatus,
+        PaymentStatus: order.PaymentStatus,
+        CreatedAt: order.OrderCreatedAt,
+        UpdatedAt: order.OrderUpdatedAt,
+        deliveryInfo: {
+            firstName: order.UserName,
+            lastName: order.UserSurname,
+            email: order.UserEmail,
+            phone: order.UserPhone,
+            selectedAddressId: shippingAddress?.AddressId,
+            streetAddress: shippingAddress?.Address1 || '',
+            Address2: shippingAddress?.Address2 || '',
+            postalAddress: shippingAddress?.CityOrSuburb || '',
+            state: shippingAddress?.Province || '',
+            zipcode: shippingAddress?.ZipCode || '',
+            country: shippingAddress?.Country || '',
+            addressLabel: shippingAddress?.Label || '',
+            addressType: shippingAddress?.AddressType || '',
+        },
+        items: items,
+        deliveryFee: deliveryFee,
+        taxAmount: taxAmount,
+    };
+}
+app.post('/api/send-order-confirmation-email', async (req, res) => {
+    const { orderId } = req.body;
+
+    if (!orderId) {
+        return res.status(400).json({ message: 'Order ID is required to send confirmation email.' });
+    }
+
+    try {
+        // 1. Check if email has already been sent for this order
+        const checkEmailStatusQuery = `
+            SELECT confirmation_email_sent, email_sent_at, UserID, OrderNumber
+            FROM gcinumus_PongolaSupplies_db.order
+            WHERE OrderID = ?;
+        `;
+        const orderStatus = await queryAsync(checkEmailStatusQuery, [orderId]);
+
+        if (orderStatus.length === 0) {
+            return res.status(404).json({ message: 'Order not found for email confirmation check.' });
+        }
+
+        const currentOrder = orderStatus[0];
+
+        if (currentOrder.confirmation_email_sent) {
+            console.log(`Email for Order ID ${orderId} already sent at ${currentOrder.email_sent_at}. Skipping re-send.`);
+            return res.status(200).json({ message: 'Order confirmation email already sent for this order.', alreadySent: true });
+        }
+
+        // If not sent, proceed to fetch full order details and send email
+        // *** FIX: Call the new reusable function directly ***
+        const order = await getComprehensiveOrderDetails(orderId);
+
+        if (!order || !order.deliveryInfo || !order.items) {
+            return res.status(404).json({ message: 'Order details not found for email confirmation.' });
+        }
+
+        // 2. Prepare data for the email template (same as before)
+        const customerName = `${order.deliveryInfo.firstName} ${order.deliveryInfo.lastName}`;
+        const orderDate = new Date(order.CreatedAt).toLocaleDateString('en-US', { day: '2-digit', month: 'long', year: 'numeric' });
+        const estimatedDeliveryDate = '5-7 business days'; // Placeholder, calculate if possible
+
+        const billingAddressLine1 = order.deliveryInfo.streetAddress;
+        const billingAddressLine2 = `${order.deliveryInfo.Address2 ? order.deliveryInfo.Address2 + ', ' : ''}${order.deliveryInfo.postalAddress}, ${order.deliveryInfo.state} ${order.deliveryInfo.zipcode}, ${order.deliveryInfo.country}`;
+
+        const emailData = {
+            customerName: customerName,
+            orderNumber: order.OrderNumber,
+            orderId: order.OrderID,
+            orderDate: orderDate,
+            estimatedDeliveryDate: estimatedDeliveryDate,
+            paymentMethod: order.PaymentStatus,
+            billingName: customerName,
+            billingAddressLine1: billingAddressLine1,
+            billingAddressLine2: billingAddressLine2,
+            deliveryMethod: 'Standard Shipping (5-7 days)',
+            itemCost: order.items.reduce((sum, item) => sum + item.SubTotal, 0).toFixed(2),
+            shippingCost: order.deliveryFee.toFixed(2),
+            taxAmount: order.taxAmount.toFixed(2),
+            couponAmount: (0.00).toFixed(2),
+            totalCost: order.TotalAmount.toFixed(2),
+            currentYear: new Date().getFullYear(),
+            continueShoppingLink: process.env.FRONTEND_URL,
+            downloadInvoiceLink: `${process.env.FRONTEND_URL}/invoice/${order.OrderID}`,
+            trackOrderLink: `${process.env.FRONTEND_URL}/orders/${order.OrderID}`,
+            items: order.items
+        };
+
+        const emailHtml = await getEmailHtml('order_confirmation_template.html', emailData);
+
+        const mailOptions = {
+            from: `Pongola Cleaning Supplies" <${process.env.EMAIL_USER}>`,
+            to: order.deliveryInfo.email,
+            subject: `Order Confirmation - #${order.OrderNumber} from Pongola Cleaning Supplies`,
+            html: emailHtml
+        };
+
+        // 3. Send the email
+        await transporter.sendMail(mailOptions);
+
+        // 4. Update the database flag after successful sending
+        const updateEmailStatusQuery = `
+            UPDATE gcinumus_PongolaSupplies_db.order
+            SET confirmation_email_sent = TRUE, email_sent_at = NOW()
+            WHERE OrderID = ?;
+        `;
+        await queryAsync(updateEmailStatusQuery, [orderId]);
+
+        res.status(200).json({ message: 'Order confirmation email sent successfully!' });
+        console.log('Order confirmation email sent successfully!');
+
+
+    } catch (error) {
+        console.error('Error sending order confirmation email:', error);
+        res.status(500).json({ message: 'Failed to send order confirmation email.', error: error.message });
+    }
+});
+
+
+
+
+
+// ORDER ENDPOINTS 
+
+const queryAsync = (sql, values) => {
+    return new Promise((resolve, reject) => {
+        db.query(sql, values, (err, results) => {
+            if (err) return reject(err);
+            resolve(results);
+        });
+    });
+};
+
+
+
+app.post('/api/orders', async (req, res) => {
+    const { UserID, ShippingAddrID, BillingAddrID, TotalAmount, OrderStatus, PaymentStatus } = req.body;
+
+    // Basic validation
+    if (!UserID || !ShippingAddrID || !TotalAmount || !OrderStatus || !PaymentStatus) {
+        return res.status(400).json({ message: 'Missing required fields for order creation.' });
+    }
+
+    const orderNumber = `ORD-${Date.now()}`; // Generate a unique order number
+
+    const query = `
+        INSERT INTO gcinumus_PongolaSupplies_db.order
+        (UserID, OrderNumber, ShippingAddrID, BillingAddrID, TotalAmount, OrderStatus, PaymentStatus, CreatedAt, UpdatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    `;
+    const values = [UserID, orderNumber, ShippingAddrID, BillingAddrID, TotalAmount, OrderStatus, PaymentStatus];
+
+    try {
+        const result = await queryAsync(query, values);
+        res.status(201).json({
+            message: 'Order created successfully',
+            orderId: result.insertId,
+            orderNumber: orderNumber
+        });
+    } catch (error) {
+        console.error('Error creating order:', error);
+        res.status(500).json({ message: 'Error creating order', error: error.message });
+    }
+});
+
+// READ All Orders (GET /api/orders)
+// Optional: Add query parameters for filtering, pagination, sorting in a real app
+app.get('/api/orders', async (req, res) => {
+    const query = `SELECT * FROM gcinumus_PongolaSupplies_db.order`;
+    try {
+        const orders = await queryAsync(query);
+        res.status(200).json(orders);
+    } catch (error) {
+        console.error('Error fetching all orders:', error);
+        res.status(500).json({ message: 'Error fetching orders', error: error.message });
+    }
+});
+
+// READ a Specific Order by OrderId (GET /api/orders/:orderId)
+// This is the endpoint used by your frontend OrderSuccess page
+// app.get('/api/orders/:orderId', async (req, res) => {
+//     const orderId = req.params.orderId;
+
+//     try {
+//         // Fetch main order details
+//         const orderQuery = `
+//             SELECT 
+//                 o.OrderID, o.UserID, o.OrderNumber, o.OrderDate, o.ShippingAddrID, o.BillingAddrID, 
+//                 o.TotalAmount, o.OrderStatus, o.PaymentStatus, o.CreatedAt, o.UpdatedAt,
+//                 u.Name AS UserName, u.Surname AS UserSurname, u.Email AS UserEmail, u.PhoneNumber AS UserPhone
+//             FROM gcinumus_PongolaSupplies_db.order o
+//             JOIN gcinumus_PongolaSupplies_db.user_tb u ON o.UserID = u.UserId
+//             WHERE o.OrderID = ?;
+//         `;
+//         const orderRows = await queryAsync(orderQuery, [orderId]);
+
+//         if (orderRows.length === 0) {
+//             return res.status(404).json({ message: 'Order not found.' });
+//         }
+//         const order = orderRows[0];
+
+//         // Fetch order items for this order
+//         const itemsQuery = `
+//             SELECT 
+//                 ItemId, ProductID, ProductName, ProductDescription, PricePerItem, Quantity, SubTotal, ItemStatus, ShippingTrackerNumber
+//             FROM gcinumus_PongolaSupplies_db.order_items
+//             WHERE OrderID = ?;
+//         `;
+//         const items = await queryAsync(itemsQuery, [orderId]);
+
+//         // Fetch shipping address details
+//         let shippingAddress = null;
+//         if (order.ShippingAddrID) {
+//             const addressQuery = `
+//                 SELECT Address1, Address2, CityOrSuburb, Province, ZipCode, Country, Label, AddressType
+//                 FROM gcinumus_PongolaSupplies_db.address
+//                 WHERE AddressId = ?;
+//             `;
+//             const addressRows = await queryAsync(addressQuery, [order.ShippingAddrID]);
+//             if (addressRows.length > 0) {
+//                 shippingAddress = addressRows[0];
+//             }
+//         }
+
+//         // Calculate subtotal from items and derive deliveryFee/tax if not explicitly stored
+//         const calculatedSubTotal = items.reduce((sum, item) => sum + item.SubTotal, 0);
+//         // Assuming TotalAmount = SubTotal + DeliveryFee + Tax
+//         // For simplicity, let's assume deliveryFee and taxAmount are fixed or derived.
+//         // In a real app, you'd fetch these if stored per order, or recalculate.
+//         // For demonstration, let's just ensure they are present in the response.
+//         const deliveryFee = 2.00; // Example fixed delivery fee
+//         const taxAmount = 5.00; // Example fixed tax amount
+
+//         const responseData = {
+//             OrderID: order.OrderID,
+//             OrderNumber: order.OrderNumber,
+//             OrderDate: order.OrderDate,
+//             TotalAmount: order.TotalAmount,
+//             OrderStatus: order.OrderStatus,
+//             PaymentStatus: order.PaymentStatus,
+//             deliveryInfo: {
+//                 firstName: order.UserName,
+//                 lastName: order.UserSurname,
+//                 email: order.UserEmail,
+//                 phone: order.UserPhone,
+//                 streetAddress: shippingAddress?.Address1 || '',
+//                 Address2: shippingAddress?.Address2 || '', // Ensure Address2 is included
+//                 postalAddress: shippingAddress?.CityOrSuburb || '',
+//                 state: shippingAddress?.Province || '',
+//                 zipcode: shippingAddress?.ZipCode || '',
+//                 country: shippingAddress?.Country || '',
+//                 addressLabel: shippingAddress?.Label || '',
+//                 addressType: shippingAddress?.AddressType || '',
+//             },
+//             items: items,
+//             deliveryFee: deliveryFee, // Include deliveryFee
+//             taxAmount: taxAmount,     // Include taxAmount
+//         };
+
+//         res.status(200).json(responseData);
+
+//     } catch (error) {
+//         console.error('Error fetching order details:', error);
+//         res.status(500).json({ message: 'Failed to retrieve order details.', error: error.message });
+//     }
+// });
+
+app.get('/api/orders/:orderId', async (req, res) => {
+    const orderId = req.params.orderId;
+
+    try {
+        // Fetch main order details and join with user details
+        const orderQuery = `
+            SELECT
+                o.OrderID, o.UserID, o.OrderNumber, o.OrderDate, o.ShippingAddrID, o.BillingAddrID,
+                o.TotalAmount, o.OrderStatus, o.PaymentStatus, o.CreatedAt AS OrderCreatedAt, o.UpdatedAt AS OrderUpdatedAt,
+                u.Name AS UserName, u.Surname AS UserSurname, u.Email AS UserEmail, u.PhoneNumber AS UserPhone
+            FROM gcinumus_PongolaSupplies_db.order o
+            JOIN gcinumus_PongolaSupplies_db.user_tb u ON o.UserID = u.UserId
+            WHERE o.OrderID = ?;
+        `;
+        const orderRows = await queryAsync(orderQuery, [orderId]);
+
+        if (orderRows.length === 0) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+        const order = orderRows[0];
+
+        // Fetch order items for this order, joining with product_image
+        const itemsQuery = `
+            SELECT
+                oi.ItemId, oi.ProductID, oi.ProductName, oi.ProductDescription, oi.PricePerItem, oi.Quantity, oi.SubTotal, oi.ItemStatus, oi.ShippingTrackerNumber,
+                pi.Image_url
+            FROM gcinumus_PongolaSupplies_db.order_items oi
+            LEFT JOIN gcinumus_PongolaSupplies_db.product_image pi ON oi.ProductID = pi.ProductID
+            WHERE oi.OrderID = ?
+            ORDER BY pi.SortOrder ASC, pi.ImageId ASC; -- Order by SortOrder to get a consistent main image
+        `;
+        const items = await queryAsync(itemsQuery, [orderId]);
+
+        // Fetch shipping address details
+        let shippingAddress = null;
+        if (order.ShippingAddrID) {
+            const addressQuery = `
+                SELECT AddressId, Address1, Address2, CityOrSuburb, Province, ZipCode, Country, Label, AddressType, CreatedAt
+                FROM gcinumus_PongolaSupplies_db.address
+                WHERE AddressId = ?;
+            `;
+            const addressRows = await queryAsync(addressQuery, [order.ShippingAddrID]);
+            if (addressRows.length > 0) {
+                shippingAddress = addressRows[0];
+            }
+        }
+
+        // --- Calculate Delivery Fee and Tax Amount ---
+        const calculatedItemsSubTotal = items.reduce((sum, item) => sum + item.SubTotal, 0);
+        let deliveryFee = 0;
+        let taxAmount = 0;
+
+        if (order.TotalAmount > calculatedItemsSubTotal) {
+            deliveryFee = 2.00; // Example fixed delivery fee
+            taxAmount = order.TotalAmount - calculatedItemsSubTotal - deliveryFee;
+            if (taxAmount < 0) taxAmount = 0;
+        }
+
+
+        const responseData = {
+            OrderID: order.OrderID,
+            OrderNumber: order.OrderNumber,
+            OrderDate: order.OrderDate,
+            TotalAmount: order.TotalAmount,
+            OrderStatus: order.OrderStatus,
+            PaymentStatus: order.PaymentStatus,
+            CreatedAt: order.OrderCreatedAt,
+            UpdatedAt: order.OrderUpdatedAt,
+            deliveryInfo: {
+                firstName: order.UserName,
+                lastName: order.UserSurname,
+                email: order.UserEmail,
+                phone: order.UserPhone,
+                selectedAddressId: shippingAddress?.AddressId,
+                streetAddress: shippingAddress?.Address1 || '',
+                Address2: shippingAddress?.Address2 || '',
+                postalAddress: shippingAddress?.CityOrSuburb || '',
+                state: shippingAddress?.Province || '',
+                zipcode: shippingAddress?.ZipCode || '',
+                country: shippingAddress?.Country || '',
+                addressLabel: shippingAddress?.Label || '',
+                addressType: shippingAddress?.AddressType || '',
+            },
+            items: items, // Now includes Image_url
+            deliveryFee: deliveryFee,
+            taxAmount: taxAmount,
+        };
+
+        res.status(200).json(responseData);
+
+    } catch (error) {
+        console.error('Error fetching order details:', error);
+        res.status(500).json({ message: 'Failed to retrieve order details.', error: error.message });
+    }
+});
+
+
+// READ All Orders for a Specific User (GET /api/orders/user/:userId)
+app.get('/api/orders/user/:userId', async (req, res) => {
+    const userId = req.params.userId;
+    const query = `SELECT * FROM gcinumus_PongolaSupplies_db.order WHERE UserID = ?`;
+    try {
+        const orders = await queryAsync(query, [userId]);
+        res.status(200).json(orders);
+    } catch (error) {
+        console.error('Error fetching orders for user:', error);
+        res.status(500).json({ message: 'Error fetching user orders', error: error.message });
+    }
+});
+
+// UPDATE an Order (PUT /api/orders/:orderId)
+// Allows partial updates based on fields provided in req.body
+app.put('/api/orders/:orderId', async (req, res) => {
+    const orderId = req.params.orderId;
+    const updates = req.body;
+
+    const updateFields = [];
+    const updateValues = [];
+
+    const allowedFields = [
+        'UserID', 'ShippingAddrID', 'BillingAddrID', 'TotalAmount',
+        'OrderStatus', 'PaymentStatus'
+        // OrderNumber, OrderDate, CreatedAt, UpdatedAt should generally not be updated this way
+    ];
+
+    for (const key in updates) {
+        if (updates.hasOwnProperty(key) && allowedFields.includes(key)) {
+            updateFields.push(`${key} = ?`);
+            updateValues.push(updates[key]);
+        }
+    }
+
+    if (updateFields.length === 0) {
+        return res.status(400).json({ message: 'No valid fields provided for order update.' });
+    }
+
+    const query = `
+        UPDATE gcinumus_PongolaSupplies_db.order
+        SET 
+            ${updateFields.join(', ')},
+            UpdatedAt = NOW()
+        WHERE OrderID = ?
+    `;
+    updateValues.push(orderId); // Add orderId for the WHERE clause
+
+    try {
+        const result = await queryAsync(query, updateValues);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Order not found or no changes made.' });
+        }
+        res.status(200).json({ message: 'Order updated successfully' });
+    } catch (error) {
+        console.error('Error updating order:', error);
+        res.status(500).json({ message: 'Error updating order', error: error.message });
+    }
+});
+
+// DELETE an Order (DELETE /api/orders/:orderId)
+// IMPORTANT: Consider transaction for deleting associated order_items
+app.delete('/api/orders/:orderId', async (req, res) => {
+    const orderId = req.params.orderId;
+
+    // In a real application, you'd likely want to delete associated order_items
+    // within a transaction to maintain data integrity.
+    // Example (conceptual):
+    // await connection.beginTransaction();
+    // await queryAsync('DELETE FROM order_items WHERE OrderID = ?', [orderId]);
+    // await queryAsync('DELETE FROM `order` WHERE OrderID = ?', [orderId]);
+    // await connection.commit();
+
+    const query = `DELETE FROM gcinumus_PongolaSupplies_db.order WHERE OrderID = ?`;
+    try {
+        const result = await queryAsync(query, [orderId]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+        res.status(200).json({ message: 'Order deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting order:', error);
+        res.status(500).json({ message: 'Error deleting order', error: error.message });
+    }
+});
+
+
+// --- CRUD Endpoints for `order_items` table ---
+
+// CREATE an Order Item (POST /api/order-items)
+// Typically, order items are inserted in bulk when an order is created.
+// This endpoint is for single item creation if needed.
+app.post('/api/order-items', async (req, res) => {
+    const { OrderID, ProductID, ProductName, ProductDescription, PricePerItem, Quantity, SubTotal, ItemStatus, ShippingTrackerNumber } = req.body;
+
+    if (!OrderID || !ProductID || !ProductName || !PricePerItem || !Quantity || !SubTotal) {
+        return res.status(400).json({ message: 'Missing required fields for order item creation.' });
+    }
+
+    const query = `
+        INSERT INTO gcinumus_PongolaSupplies_db.order_items
+        (OrderID, ProductID, ProductName, ProductDescription, PricePerItem, Quantity, SubTotal, ItemStatus, ShippingTrackerNumber, CreatedAt, UpdatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    `;
+    const values = [OrderID, ProductID, ProductName, ProductDescription, PricePerItem, Quantity, SubTotal, ItemStatus, ShippingTrackerNumber];
+
+    try {
+        const result = await queryAsync(query, values);
+        res.status(201).json({ message: 'Order item created successfully', itemId: result.insertId });
+    } catch (error) {
+        console.error('Error creating order item:', error);
+        res.status(500).json({ message: 'Error creating order item', error: error.message });
+    }
+});
+
+// READ All Order Items (GET /api/order-items)
+app.get('/api/order-items', async (req, res) => {
+    const query = `SELECT * FROM gcinumus_PongolaSupplies_db.order_items`;
+    try {
+        const items = await queryAsync(query);
+        res.status(200).json(items);
+    } catch (error) {
+        console.error('Error fetching all order items:', error);
+        res.status(500).json({ message: 'Error fetching order items', error: error.message });
+    }
+});
+
+// READ a Specific Order Item by ItemId (GET /api/order-items/:itemId)
+app.get('/api/order-items/:itemId', async (req, res) => {
+    const itemId = req.params.itemId;
+    const query = `SELECT * FROM gcinumus_PongolaSupplies_db.order_items WHERE ItemId = ?`;
+    try {
+        const item = await queryAsync(query, [itemId]);
+        if (item.length === 0) {
+            return res.status(404).json({ message: 'Order item not found.' });
+        }
+        res.status(200).json(item[0]);
+    } catch (error) {
+        console.error('Error fetching order item:', error);
+        res.status(500).json({ message: 'Error fetching order item', error: error.message });
+    }
+});
+
+// READ All Items for a Specific Order (GET /api/order-items/order/:orderId)
+// This is useful for displaying all products within a specific order.
+app.get('/api/order-items/order/:orderId', async (req, res) => {
+    const orderId = req.params.orderId;
+    const query = `SELECT * FROM gcinumus_PongolaSupplies_db.order_items WHERE OrderID = ?`;
+    try {
+        const items = await queryAsync(query, [orderId]);
+        res.status(200).json(items);
+    } catch (error) {
+        console.error('Error fetching order items for order:', error);
+        res.status(500).json({ message: 'Error fetching order items', error: error.message });
+    }
+});
+
+// UPDATE an Order Item (PUT /api/order-items/:itemId)
+// Allows partial updates based on fields provided in req.body
+app.put('/api/order-items/:itemId', async (req, res) => {
+    const itemId = req.params.itemId;
+    const updates = req.body;
+
+    const updateFields = [];
+    const updateValues = [];
+
+    const allowedFields = [
+        'ProductID', 'OrderID', 'ProductName', 'ProductDescription',
+        'PricePerItem', 'Quantity', 'SubTotal', 'ItemStatus', 'ShippingTrackerNumber'
+    ];
+
+    for (const key in updates) {
+        if (updates.hasOwnProperty(key) && allowedFields.includes(key)) {
+            updateFields.push(`${key} = ?`);
+            updateValues.push(updates[key]);
+        }
+    }
+
+    if (updateFields.length === 0) {
+        return res.status(400).json({ message: 'No valid fields provided for order item update.' });
+    }
+
+    const query = `
+        UPDATE gcinumus_PongolaSupplies_db.order_items
+        SET 
+            ${updateFields.join(', ')},
+            UpdatedAt = NOW()
+        WHERE ItemId = ?
+    `;
+    updateValues.push(itemId); // Add itemId for the WHERE clause
+
+    try {
+        const result = await queryAsync(query, updateValues);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Order item not found or no changes made.' });
+        }
+        res.status(200).json({ message: 'Order item updated successfully' });
+    } catch (error) {
+        console.error('Error updating order item:', error);
+        res.status(500).json({ message: 'Error updating order item', error: error.message });
+    }
+});
+
+// DELETE an Order Item (DELETE /api/order-items/:itemId)
+app.delete('/api/order-items/:itemId', async (req, res) => {
+    const itemId = req.params.itemId;
+    const query = `DELETE FROM gcinumus_PongolaSupplies_db.order_items WHERE ItemId = ?`;
+    try {
+        const result = await queryAsync(query, [itemId]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Order item not found.' });
+        }
+        res.status(200).json({ message: 'Order item deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting order item:', error);
+        res.status(500).json({ message: 'Error deleting order item', error: error.message });
+    }
+});
+//
 
 app.get('/api/addresses', (req, res) => {
     const query = `
@@ -612,7 +1320,7 @@ app.delete('/api/brands/:id', (req, res) => {
 
 
 app.post('/api/place-order', async (req, res) => {
-    const { deliveryInfo, items, paymentMethod, deliveryFee } = req.body; // Added deliveryFeeAmount for testing
+    const { deliveryInfo, items, paymentMethod, deliveryFee, return_Url } = req.body; // Added deliveryFeeAmount for testing
 
     // --- 1. Validate Input Data ---
     // Basic validation - you should expand this to validate all fields properly
@@ -790,7 +1498,7 @@ app.post('/api/place-order', async (req, res) => {
         const payfastFormData = {
             merchant_id: PAYFAST_MERCHANT_ID,
             merchant_key: PAYFAST_MERCHANT_KEY,
-            return_url: RETURN_URL,
+            return_url: `${return_Url}?orderID=${orderId}`,
             cancel_url: CANCEL_URL,
             notify_url: NOTIFY_URL,
             name_first: deliveryInfo.firstName,
