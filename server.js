@@ -266,6 +266,99 @@ async function getComprehensiveOrderDetails(orderId) {
         taxAmount: taxAmount,
     };
 }
+
+
+
+
+app.get('/api/user/orders/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    // SQL query to join orders, order_items, product, and product_image
+    // We select all relevant columns and use aliases to avoid conflicts
+    const query = `
+        SELECT
+            o.OrderId,
+            o.UserID,
+            o.OrderNumber,
+            o.OrderDate,
+            o.TotalAmount,
+            o.OrderStatus,
+            o.PaymentStatus,
+            o.ShippingAddrID,
+            o.BillingAddrID,
+            oi.ItemId,
+            oi.ProductID AS OrderItemProductId,
+            oi.ProductName AS OrderItemProductName,
+            oi.ProductDescription AS OrderItemProductDescription,
+            oi.PricePerItem,
+            oi.Quantity,
+            p.ProductName AS OriginalProductName,
+            p.ProductDescription AS OriginalProductDescription,
+            pi.Image_url,
+            pi.SortOrder
+        FROM
+            gcinumus_PongolaSupplies_db.order AS o
+        JOIN
+            gcinumus_PongolaSupplies_db.order_items AS oi ON o.OrderId = oi.OrderID
+        LEFT JOIN
+            gcinumus_PongolaSupplies_db.product AS p ON oi.ProductID = p.ProductId
+        LEFT JOIN
+            gcinumus_PongolaSupplies_db.product_image AS pi ON p.ProductId = pi.ProductID AND pi.SortOrder = 0
+        WHERE
+            o.UserID = ?
+        ORDER BY
+            o.OrderDate DESC, o.OrderId DESC, oi.ItemId ASC;
+    `;
+
+    try {
+        const results = await queryAsync(query, [userId]);
+
+        if (results.length === 0) {
+            return res.status(200).json([]); // Return empty array if no orders found
+        }
+
+        // Transform flat results into nested order objects
+        const ordersMap = new Map();
+
+        results.forEach(row => {
+            const orderId = row.OrderId;
+            if (!ordersMap.has(orderId)) {
+                ordersMap.set(orderId, {
+                    OrderId: row.OrderId,
+                    UserID: row.UserID,
+                    OrderNumber: row.OrderNumber,
+                    OrderDate: row.OrderDate,
+                    TotalAmount: parseFloat(row.TotalAmount), // Ensure it's a number
+                    OrderStatus: row.OrderStatus,
+                    PaymentStatus: row.PaymentStatus,
+                    ShippingAddrID: row.ShippingAddrID,
+                    BillingAddrID: row.BillingAddrID,
+                    items: []
+                });
+            }
+
+            const order = ordersMap.get(orderId);
+            order.items.push({
+                ItemId: row.ItemId,
+                ProductID: row.OrderItemProductId,
+                ProductName: row.OrderItemProductName || row.OriginalProductName, // Prefer order_items name, fallback to product name
+                ProductDescription: row.OrderItemProductDescription || row.OriginalProductDescription, // Prefer order_items desc, fallback to product desc
+                PricePerItem: parseFloat(row.PricePerItem), // Ensure it's a number
+                Quantity: row.Quantity,
+                ImageUrl: row.Image_url // Construct full image URL
+            });
+        });
+
+        const userOrders = Array.from(ordersMap.values());
+        res.status(200).json(userOrders);
+
+    } catch (error) {
+        console.error(`Error fetching orders for user ${userId}:`, error);
+        res.status(500).json({ message: 'Error fetching user orders', error: error.message });
+    }
+});
+
+
 app.post('/api/send-order-confirmation-email', async (req, res) => {
     const { orderId } = req.body;
 
@@ -1319,23 +1412,229 @@ app.delete('/api/brands/:id', (req, res) => {
 
 
 
+// app.post('/api/place-order', async (req, res) => {
+//     const { deliveryInfo, items, paymentMethod, deliveryFee, return_Url } = req.body; // Added deliveryFeeAmount for testing
+
+//     // --- 1. Validate Input Data ---
+//     // Basic validation - you should expand this to validate all fields properly
+//     if (!deliveryInfo || !items || items.length === 0 || !paymentMethod) {
+//         console.error('Validation Error: Missing required order information.');
+//         return res.status(400).json({ message: 'Missing required order information.' });
+//     }
+
+//     // Validate deliveryInfo fields (basic check)
+//     if (!deliveryInfo.firstName || !deliveryInfo.lastName || !deliveryInfo.email || !deliveryInfo.streetAddress || !deliveryInfo.phone) {
+//         console.error('Validation Error: Missing required delivery information fields.');
+//         return res.status(400).json({ message: 'Missing required delivery information fields.' });
+//     }
+
+//     // Validate items structure (basic check)
+//     for (const item of items) {
+//         if (!item.productId || item.quantity <= 0) {
+//             console.error('Validation Error: Invalid item data in cart.');
+//             return res.status(400).json({ message: 'Invalid item data in cart.' });
+//         }
+//     }
+
+//     // --- 2. Fetch Product Details (Price, Name, Description) Securely from Database ---
+//     const productIds = items.map(item => item.productId);
+//     // Modified query to fetch ProductName and ProductDescription as per order_items table structure
+//     const getProductsQuery = `SELECT \`ProductId\`, \`ProductName\`, \`ProductDescription\`, \`Price\` ,\`StockQuantity\` FROM \`gcinumus_PongolaSupplies_db\`.\`product\` WHERE \`ProductId\` IN (?)`;
+
+//     let products;
+//     try {
+//         // Execute the query to get product details
+//         products = await new Promise((resolve, reject) => {
+//             db.query(getProductsQuery, [productIds], (err, results) => {
+//                 if (err) return reject(err);
+//                 resolve(results);
+//             });
+//         });
+
+//         if (products.length !== productIds.length) {
+//             // This means some product IDs from the cart were not found in the database
+//             console.error('Error: Some product IDs from cart not found in database.');
+//             return res.status(400).json({ message: 'Some items in your cart are no longer available.' });
+//         }
+
+//     } catch (error) {
+//         console.error('Error fetching product details for order:', error);
+//         return res.status(500).json({ message: 'An error occurred while validating product details.' });
+//     }
+
+//     // Map fetched products by ID for easy lookup
+//     const productDetailsMap = products.reduce((map, product) => {
+//         map[product.ProductId] = product; // Store the whole product object
+//         return map;
+//     }, {});
+
+//     // --- 3. Calculate Total Securely and Prepare Order Items Data ---
+//     let subtotal = 0;
+//     const orderItemsDetails = []; // To store details for order_items table
+
+//     for (const item of items) {
+//         const product = productDetailsMap[item.productId]; // Get product details from securely fetched data
+//         if (!product) {
+//             // Should not happen if the productIds check passed, but as a safeguard
+//             console.error(`Error: Details not found for product ID ${item.productId} during total calculation.`);
+//             return res.status(500).json({ message: 'An internal error occurred while calculating order total.' });
+//         }
+
+//         const pricePerItem = product.Price || 0; // Use fetched price, default to 0 if not available
+//         const itemSubtotal = pricePerItem * item.quantity;
+//         subtotal += itemSubtotal;
+
+//         // Prepare data for order_items table, matching its structure
+//         orderItemsDetails.push({
+//             ProductID: item.productId,
+//             ProductName: product.ProductName,
+//             ProductDescription: product.ProductDescription,
+//             PricePerItem: pricePerItem,
+//             Quantity: item.quantity,
+//             SubTotal: itemSubtotal, // Include item subtotal
+//             ItemStatus: 'Pending', // Initial item status
+//             ShippingTrackerNumber: null, // Initial tracker number
+//         });
+//     }
+
+//     // Use the deliveryFeeAmount passed from the frontend for testing, but ideally calculate this on backend
+//     const ddeliveryFee = deliveryFee !== undefined ? parseFloat(deliveryFee) : (subtotal > 0 ? deliveryFee : 0); // Use frontend value if provided, otherwise use backend logic
+//     const grandTotal = subtotal + ddeliveryFee;
+
+
+//     // --- 4. Save the Order to the Database ---
+//     // Modified INSERT query to match the 'order' table structure
+//     const orderInsertQuery = `
+//         INSERT INTO \`gcinumus_PongolaSupplies_db\`.\`order\`
+//         (\`UserID\`, \`OrderNumber\`, \`ShippingAddrID\`, \`BillingAddrID\`, \`TotalAmount\`, \`OrderStatus\`, \`PaymentStatus\`)
+//         VALUES (?, ?, ?, ?, ?, ?, ?)
+//     `;
+//     // Assuming you have a way to get the UserID (e.g., from authenticated user session)
+//     // For now, using a placeholder UserID = 1. You need to replace this.
+//     const userId = deliveryInfo.userID; // ** IMPORTANT: Replace with actual User ID from user session **
+
+//     // Generate a unique Order Number (example: using timestamp or a library like uuid)
+//     const orderNumber = `ORD-${Date.now()}`; // Example simple order number
+
+//     // ** IMPORTANT: Handle ShippingAddrID and BillingAddrID **
+//     // Your table structure implies separate address records. The frontend sends address strings.
+//     // You need to decide how to handle this:
+//     // Option 1 (Recommended): Save the delivery address to an address table first and get its ID.
+//     // Option 2 (Simpler for testing, if acceptable): Store the address string directly in the order table if you modify its structure.
+//     // For this update, I will use placeholder IDs (e.g., 1) and add comments.
+//     const shippingAddrId = deliveryInfo.selectedAddressId; // ** IMPORTANT: Replace with actual Shipping Address ID **
+//     const billingAddrId = null; // ** IMPORTANT: Replace with actual Billing Address ID (could be same as shipping) **
+
+
+//     let orderId;
+//     try {
+//         // Insert into orders table
+//         const orderResult = await new Promise((resolve, reject) => {
+//             db.query(orderInsertQuery, [userId, orderNumber, shippingAddrId, billingAddrId, grandTotal, 'Pending', 'Pending'], (err, result) => {
+//                 if (err) return reject(err);
+//                 resolve(result);
+//             });
+//         });
+//         orderId = orderResult.insertId; // Get the ID of the newly inserted order
+
+//         // Insert into order_items table
+//         // Modified INSERT query to match the 'order_items' table structure
+//         const orderItemsInsertQuery = `
+//             INSERT INTO \`gcinumus_PongolaSupplies_db\`.\`order_items\`
+//             (\`OrderID\`, \`ProductID\`, \`ProductName\`, \`ProductDescription\`, \`PricePerItem\`, \`Quantity\`, \`SubTotal\`, \`ItemStatus\`, \`ShippingTrackerNumber\`)
+//             VALUES ?
+//         `;
+//         // Prepare values for bulk insert, matching order_items columns
+//         const orderItemsValues = orderItemsDetails.map(item => [
+//             orderId,
+//             item.ProductID,
+//             item.ProductName,
+//             item.ProductDescription,
+//             item.PricePerItem,
+//             item.Quantity,
+//             item.SubTotal,
+//             item.ItemStatus,
+//             item.ShippingTrackerNumber
+
+//         ]);
+
+//         if (orderItemsValues.length > 0) {
+//             await new Promise((resolve, reject) => {
+//                 db.query(orderItemsInsertQuery, [orderItemsValues], (err, result) => {
+//                     if (err) {
+//                         console.error('Error inserting order items:', err);
+//                         // Consider rolling back the orders insert if order_items insert fails
+//                         // db.query('DELETE FROM `gcinumus_PongolaSupplies_db`.`order` WHERE `OrderId` = ?', [orderId], (rollbackErr) => { ... });
+//                         return reject(err);
+//                     }
+//                     resolve(result);
+//                 });
+//             });
+//         }
+
+//     } catch (error) {
+//         console.error('Error saving order to database:', error);
+//         // Consider rolling back the orders insert if order_items insert fails
+//         return res.status(500).json({ message: 'An error occurred while saving your order.' });
+//     }
+
+
+//     // --- 5. Handle Payment Method ---
+//     if (paymentMethod === 'cod') {
+//         // For Cash on Delivery, order is placed, no external payment needed
+//         // Respond with success and the new order ID
+//         res.json({ success: true, message: 'Order placed successfully (Cash on Delivery)!', orderId: orderId });
+
+//     } else if (paymentMethod === 'payfast') {
+//         // --- Generate PayFast Form Data ---
+//         // This is a simplified example. Refer to PayFast documentation for all required fields.
+//         const payfastFormData = {
+//             merchant_id: PAYFAST_MERCHANT_ID,
+//             merchant_key: PAYFAST_MERCHANT_KEY,
+//             return_url: `${return_Url}?orderID=${orderId}`,
+//             cancel_url: CANCEL_URL,
+//             notify_url: NOTIFY_URL,
+//             name_first: deliveryInfo.firstName,
+//             name_last: deliveryInfo.lastName,
+//             email_address: deliveryInfo.email,
+//             cell_number: deliveryInfo.phone, // Assuming phone maps to cell_number
+//             // m_indy: orderId, // Use orderId as a custom parameter to identify the order on return/notify
+//             custom_int1: orderId,
+//             amount: grandTotal.toFixed(2), // Total amount with 2 decimal places
+//             item_name: `Order #${orderNumber}`, // Use the generated order number
+//             item_description: `Purchase from Pongola Store (Order #${orderNumber})`, // Use the generated order number
+//             // Add other required or optional fields as per PayFast documentation
+//             // e.g., custom_str1, custom_int1, email_confirmation, confirmation_address, etc.
+//         };
+
+
+
+//         console.log('PayFast Payload:', payfastFormData);
+//         // Respond to the frontend with the PayFast URL and form data
+//         res.json({ success: true, payfastUrl: PAYFAST_URL, payfastFormData: payfastFormData });
+
+//     } else {
+//         // Handle unsupported payment methods
+//         console.error('Unsupported payment method:', paymentMethod);
+//         return res.status(400).json({ message: 'Unsupported payment method selected.' });
+//     }
+// });
+
+
 app.post('/api/place-order', async (req, res) => {
-    const { deliveryInfo, items, paymentMethod, deliveryFee, return_Url } = req.body; // Added deliveryFeeAmount for testing
+    const { deliveryInfo, items, paymentMethod, deliveryFee, return_Url } = req.body;
 
     // --- 1. Validate Input Data ---
-    // Basic validation - you should expand this to validate all fields properly
     if (!deliveryInfo || !items || items.length === 0 || !paymentMethod) {
         console.error('Validation Error: Missing required order information.');
         return res.status(400).json({ message: 'Missing required order information.' });
     }
 
-    // Validate deliveryInfo fields (basic check)
-    if (!deliveryInfo.firstName || !deliveryInfo.lastName || !deliveryInfo.email || !deliveryInfo.streetAddress || !deliveryInfo.phone) {
+    if (!deliveryInfo.firstName || !deliveryInfo.lastName || !deliveryInfo.email || !deliveryInfo.streetAddress) {
         console.error('Validation Error: Missing required delivery information fields.');
         return res.status(400).json({ message: 'Missing required delivery information fields.' });
     }
 
-    // Validate items structure (basic check)
     for (const item of items) {
         if (!item.productId || item.quantity <= 0) {
             console.error('Validation Error: Invalid item data in cart.');
@@ -1343,14 +1642,16 @@ app.post('/api/place-order', async (req, res) => {
         }
     }
 
-    // --- 2. Fetch Product Details (Price, Name, Description) Securely from Database ---
+    // --- 2. Fetch Product Details (Price, Name, Description, and StockQuantity) Securely from Database ---
     const productIds = items.map(item => item.productId);
-    // Modified query to fetch ProductName and ProductDescription as per order_items table structure
-    const getProductsQuery = `SELECT \`ProductId\`, \`ProductName\`, \`ProductDescription\`, \`Price\` FROM \`gcinumus_PongolaSupplies_db\`.\`product\` WHERE \`ProductId\` IN (?)`;
+    const getProductsQuery = `
+        SELECT \`ProductId\`, \`ProductName\`, \`ProductDescription\`, \`Price\`, \`StockQuantity\`
+        FROM \`gcinumus_PongolaSupplies_db\`.\`product\`
+        WHERE \`ProductId\` IN (?)
+    `;
 
     let products;
     try {
-        // Execute the query to get product details
         products = await new Promise((resolve, reject) => {
             db.query(getProductsQuery, [productIds], (err, results) => {
                 if (err) return reject(err);
@@ -1359,79 +1660,75 @@ app.post('/api/place-order', async (req, res) => {
         });
 
         if (products.length !== productIds.length) {
-            // This means some product IDs from the cart were not found in the database
             console.error('Error: Some product IDs from cart not found in database.');
             return res.status(400).json({ message: 'Some items in your cart are no longer available.' });
         }
 
+        // --- 2.1. Perform Stock Availability Check (IMPORTANT: BEFORE saving order) ---
+        for (const item of items) {
+            const productInDb = products.find(p => p.ProductId === item.productId);
+            if (!productInDb) {
+                console.error(`Product ID ${item.productId} not found during stock check.`);
+                return res.status(400).json({ message: 'One or more products in your cart are invalid.' });
+            }
+            if (productInDb.StockQuantity < item.quantity) {
+                console.error(`Insufficient stock for product ID ${item.productId}. Requested: ${item.quantity}, Available: ${productInDb.StockQuantity}`);
+                return res.status(400).json({ message: `Insufficient stock for ${productInDb.ProductName}. Available: ${productInDb.StockQuantity}.` });
+            }
+        }
+
     } catch (error) {
-        console.error('Error fetching product details for order:', error);
-        return res.status(500).json({ message: 'An error occurred while validating product details.' });
+        console.error('Error fetching product details or checking stock for order:', error);
+        return res.status(500).json({ message: 'An error occurred while validating product details or stock.' });
     }
 
-    // Map fetched products by ID for easy lookup
+    // Map fetched products by ID for easy lookup (including StockQuantity)
     const productDetailsMap = products.reduce((map, product) => {
-        map[product.ProductId] = product; // Store the whole product object
+        map[product.ProductId] = product;
         return map;
     }, {});
 
     // --- 3. Calculate Total Securely and Prepare Order Items Data ---
     let subtotal = 0;
-    const orderItemsDetails = []; // To store details for order_items table
+    const orderItemsDetails = [];
 
     for (const item of items) {
-        const product = productDetailsMap[item.productId]; // Get product details from securely fetched data
+        const product = productDetailsMap[item.productId];
         if (!product) {
-            // Should not happen if the productIds check passed, but as a safeguard
-            console.error(`Error: Details not found for product ID ${item.productId} during total calculation.`);
+            console.error(`Error: Details not found for product ID ${item.productId} during total calculation (should have been caught earlier).`);
             return res.status(500).json({ message: 'An internal error occurred while calculating order total.' });
         }
 
-        const pricePerItem = product.Price || 0; // Use fetched price, default to 0 if not available
+        const pricePerItem = product.Price || 0;
         const itemSubtotal = pricePerItem * item.quantity;
         subtotal += itemSubtotal;
 
-        // Prepare data for order_items table, matching its structure
         orderItemsDetails.push({
             ProductID: item.productId,
             ProductName: product.ProductName,
             ProductDescription: product.ProductDescription,
             PricePerItem: pricePerItem,
             Quantity: item.quantity,
-            SubTotal: itemSubtotal, // Include item subtotal
-            ItemStatus: 'Pending', // Initial item status
-            ShippingTrackerNumber: null, // Initial tracker number
+            SubTotal: itemSubtotal,
+            ItemStatus: 'Pending',
+            ShippingTrackerNumber: null,
         });
     }
 
-    // Use the deliveryFeeAmount passed from the frontend for testing, but ideally calculate this on backend
-    const ddeliveryFee = deliveryFee !== undefined ? parseFloat(deliveryFee) : (subtotal > 0 ? deliveryFee : 0); // Use frontend value if provided, otherwise use backend logic
+    const ddeliveryFee = deliveryFee !== undefined ? parseFloat(deliveryFee) : (subtotal > 0 ? deliveryFee : 0);
     const grandTotal = subtotal + ddeliveryFee;
 
 
     // --- 4. Save the Order to the Database ---
-    // Modified INSERT query to match the 'order' table structure
     const orderInsertQuery = `
         INSERT INTO \`gcinumus_PongolaSupplies_db\`.\`order\`
         (\`UserID\`, \`OrderNumber\`, \`ShippingAddrID\`, \`BillingAddrID\`, \`TotalAmount\`, \`OrderStatus\`, \`PaymentStatus\`)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
-    // Assuming you have a way to get the UserID (e.g., from authenticated user session)
-    // For now, using a placeholder UserID = 1. You need to replace this.
-    const userId = deliveryInfo.userID; // ** IMPORTANT: Replace with actual User ID from user session **
-
-    // Generate a unique Order Number (example: using timestamp or a library like uuid)
-    const orderNumber = `ORD-${Date.now()}`; // Example simple order number
-
-    // ** IMPORTANT: Handle ShippingAddrID and BillingAddrID **
-    // Your table structure implies separate address records. The frontend sends address strings.
-    // You need to decide how to handle this:
-    // Option 1 (Recommended): Save the delivery address to an address table first and get its ID.
-    // Option 2 (Simpler for testing, if acceptable): Store the address string directly in the order table if you modify its structure.
-    // For this update, I will use placeholder IDs (e.g., 1) and add comments.
-    const shippingAddrId = deliveryInfo.selectedAddressId; // ** IMPORTANT: Replace with actual Shipping Address ID **
-    const billingAddrId = null; // ** IMPORTANT: Replace with actual Billing Address ID (could be same as shipping) **
-
+    const userId = deliveryInfo.userID;
+    const orderNumber = `ORD-${Date.now()}`;
+    const shippingAddrId = deliveryInfo.selectedAddressId;
+    const billingAddrId = null; // Adjust if you collect a separate billing address
 
     let orderId;
     try {
@@ -1442,16 +1739,14 @@ app.post('/api/place-order', async (req, res) => {
                 resolve(result);
             });
         });
-        orderId = orderResult.insertId; // Get the ID of the newly inserted order
+        orderId = orderResult.insertId;
 
         // Insert into order_items table
-        // Modified INSERT query to match the 'order_items' table structure
         const orderItemsInsertQuery = `
             INSERT INTO \`gcinumus_PongolaSupplies_db\`.\`order_items\`
             (\`OrderID\`, \`ProductID\`, \`ProductName\`, \`ProductDescription\`, \`PricePerItem\`, \`Quantity\`, \`SubTotal\`, \`ItemStatus\`, \`ShippingTrackerNumber\`)
             VALUES ?
         `;
-        // Prepare values for bulk insert, matching order_items columns
         const orderItemsValues = orderItemsDetails.map(item => [
             orderId,
             item.ProductID,
@@ -1462,7 +1757,6 @@ app.post('/api/place-order', async (req, res) => {
             item.SubTotal,
             item.ItemStatus,
             item.ShippingTrackerNumber
-
         ]);
 
         if (orderItemsValues.length > 0) {
@@ -1470,8 +1764,6 @@ app.post('/api/place-order', async (req, res) => {
                 db.query(orderItemsInsertQuery, [orderItemsValues], (err, result) => {
                     if (err) {
                         console.error('Error inserting order items:', err);
-                        // Consider rolling back the orders insert if order_items insert fails
-                        // db.query('DELETE FROM `gcinumus_PongolaSupplies_db`.`order` WHERE `OrderId` = ?', [orderId], (rollbackErr) => { ... });
                         return reject(err);
                     }
                     resolve(result);
@@ -1479,22 +1771,51 @@ app.post('/api/place-order', async (req, res) => {
             });
         }
 
+        // --- NEW: Decrease Stock Quantity for each product ---
+        const stockUpdatePromises = items.map(item => {
+            const updateStockQuery = `
+                UPDATE \`gcinumus_PongolaSupplies_db\`.\`product\`
+                SET \`StockQuantity\` = \`StockQuantity\` - ?
+                WHERE \`ProductId\` = ?;
+            `;
+            return new Promise((resolve, reject) => {
+                db.query(updateStockQuery, [item.quantity, item.productId], (err, result) => {
+                    if (err) {
+                        console.error(`Error decreasing stock for Product ID ${item.productId}:`, err);
+                        return reject(err);
+                    }
+                    resolve(result);
+                });
+            });
+        });
+
+        await Promise.all(stockUpdatePromises);
+        console.log('Stock quantities decreased successfully for all items.');
+
     } catch (error) {
-        console.error('Error saving order to database:', error);
-        // Consider rolling back the orders insert if order_items insert fails
-        return res.status(500).json({ message: 'An error occurred while saving your order.' });
+        console.error('Error saving order or updating stock:', error);
+        // Basic rollback if order was inserted but subsequent operations failed
+        if (orderId) {
+            console.warn(`Attempting to delete partially created order ${orderId} due to error.`);
+            await new Promise((resolve, reject) => {
+                db.query('DELETE FROM `gcinumus_PongolaSupplies_db`.`order` WHERE `OrderId` = ?', [orderId], (rollbackErr) => {
+                    if (rollbackErr) {
+                        console.error('Error during rollback (deleting order):', rollbackErr);
+                        return reject(rollbackErr);
+                    }
+                    resolve();
+                });
+            }).catch(e => console.error('Rollback failed:', e));
+        }
+        return res.status(500).json({ message: 'An error occurred while processing your order and updating stock.' });
     }
 
 
     // --- 5. Handle Payment Method ---
     if (paymentMethod === 'cod') {
-        // For Cash on Delivery, order is placed, no external payment needed
-        // Respond with success and the new order ID
         res.json({ success: true, message: 'Order placed successfully (Cash on Delivery)!', orderId: orderId });
 
     } else if (paymentMethod === 'payfast') {
-        // --- Generate PayFast Form Data ---
-        // This is a simplified example. Refer to PayFast documentation for all required fields.
         const payfastFormData = {
             merchant_id: PAYFAST_MERCHANT_ID,
             merchant_key: PAYFAST_MERCHANT_KEY,
@@ -1504,38 +1825,21 @@ app.post('/api/place-order', async (req, res) => {
             name_first: deliveryInfo.firstName,
             name_last: deliveryInfo.lastName,
             email_address: deliveryInfo.email,
-            cell_number: deliveryInfo.phone, // Assuming phone maps to cell_number
-            // m_indy: orderId, // Use orderId as a custom parameter to identify the order on return/notify
+            cell_number: deliveryInfo.phone,
             custom_int1: orderId,
-            amount: grandTotal.toFixed(2), // Total amount with 2 decimal places
-            item_name: `Order #${orderNumber}`, // Use the generated order number
-            item_description: `Purchase from Pongola Store (Order #${orderNumber})`, // Use the generated order number
-            // Add other required or optional fields as per PayFast documentation
-            // e.g., custom_str1, custom_int1, email_confirmation, confirmation_address, etc.
+            amount: grandTotal.toFixed(2),
+            item_name: `Order #${orderNumber}`,
+            item_description: `Purchase from Pongola Store (Order #${orderNumber})`,
         };
 
-
-
-        // --- Calculate PayFast Signature ---
-        // The signature is calculated based on specific fields, ordered alphabetically, and using the passphrase.
-        // ** IMPORTANT: Refer to PayFast documentation for the exact signature calculation method and fields **
-        // This is a common method, but verify with PayFast's latest documentation.
-        // The string to sign should include the passphrase at the end.
-        // Fields to include in the signature string (alphabetical order):
-
         console.log('PayFast Payload:', payfastFormData);
-        // Respond to the frontend with the PayFast URL and form data
         res.json({ success: true, payfastUrl: PAYFAST_URL, payfastFormData: payfastFormData });
 
     } else {
-        // Handle unsupported payment methods
         console.error('Unsupported payment method:', paymentMethod);
         return res.status(400).json({ message: 'Unsupported payment method selected.' });
     }
 });
-
-
-
 
 app.post('/api/payfast-itn', (req, res) => {
     // This is a placeholder. You need to implement the full ITN validation logic here.
