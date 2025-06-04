@@ -268,6 +268,124 @@ async function getComprehensiveOrderDetails(orderId) {
 }
 
 
+app.get('/api/transactions', async (req, res) => {
+    const { startDate, endDate } = req.query; // Get date range from query parameters
+
+    let query = `
+        SELECT
+            t.TransactionID,
+            t.OrderID,
+            t.Amount,
+            t.Status,
+            t.PaymentMethod,
+            t.Item AS ItemsCount, 
+            t.CreatedAt,
+            o.OrderNumber,
+            u.Name AS CustomerName,
+            u.Surname AS CustomerSurname
+        FROM
+            gcinumus_PongolaSupplies_db.transaction AS t
+        JOIN
+            gcinumus_PongolaSupplies_db.order AS o ON t.OrderID = o.OrderID
+        JOIN
+            gcinumus_PongolaSupplies_db.user_tb AS u ON o.UserID = u.UserId
+        WHERE 1=1 -- A trick to easily append conditions
+    `;
+
+    const queryValues = [];
+
+    // Add date range filtering if provided
+    if (startDate) {
+        query += ` AND t.CreatedAt >= ?`;
+        queryValues.push(startDate + ' 00:00:00'); // Start of the day
+    }
+    if (endDate) {
+        query += ` AND t.CreatedAt <= ?`;
+        queryValues.push(endDate + ' 23:59:59'); // End of the day
+    }
+
+    query += ` ORDER BY t.CreatedAt DESC;`; // Order by most recent transactions
+
+    try {
+        const transactions = await queryAsync(query, queryValues);
+        res.status(200).json(transactions);
+    } catch (error) {
+        console.error('Error fetching transactions:', error);
+        res.status(500).json({ message: 'Failed to fetch transactions', error: error.message });
+    }
+});
+
+app.post('/api/confirm-order-payment', async (req, res) => {
+    const { orderId, paymentMethod } = req.body;
+
+    if (!orderId || !paymentMethod) {
+        return res.status(400).json({ message: 'Order ID and Payment Method are required.' });
+    }
+
+    try {
+        // 1. Fetch the order details to get the TotalAmount and current status
+        const orderDetailsQuery = `
+            SELECT TotalAmount, OrderStatus, PaymentStatus
+            FROM gcinumus_PongolaSupplies_db.order
+            WHERE OrderID = ?;
+        `;
+        const orderRows = await queryAsync(orderDetailsQuery, [orderId]);
+
+        if (orderRows.length === 0) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        const order = orderRows[0];
+
+        // 2. Check if the order is already marked as paid/completed
+        // This is crucial for idempotency to prevent duplicate transaction records
+        if (order.PaymentStatus === 'Paid') {
+            console.log(`Order ${orderId} already marked as paid/completed. Skipping update.`);
+            return res.status(200).json({ message: 'Order already confirmed and paid.', status: 'already_confirmed' });
+        }
+
+        // NEW: Fetch order items to calculate total number of items
+        const orderItemsQuery = `
+            SELECT Quantity
+            FROM gcinumus_PongolaSupplies_db.order_items
+            WHERE OrderID = ?;
+        `;
+        const items = await queryAsync(orderItemsQuery, [orderId]);
+
+        // Calculate the total number of individual items
+        const totalItemsCount = items.reduce((sum, item) => sum + item.Quantity, 0);
+
+
+        // 3. Update the order status to 'Completed' and 'Paid'
+        const updateOrderQuery = `
+            UPDATE gcinumus_PongolaSupplies_db.order
+            SET  PaymentStatus = 'Paid'
+            WHERE OrderID = ?;
+        `;
+        await queryAsync(updateOrderQuery, [orderId]);
+
+        // 4. Record the transaction in the 'transaction' table
+        // NEW: Added 'Item' column to the INSERT statement
+        const insertTransactionQuery = `
+            INSERT INTO gcinumus_PongolaSupplies_db.transaction
+            (OrderID, Amount, Status, PaymentMethod, Item, CreatedAt)
+            VALUES (?, ?, ?, ?, ?, NOW());
+        `;
+        // Use the TotalAmount from the fetched order details for the transaction
+        const transactionAmount = order.TotalAmount;
+        const transactionStatus = 'Completed'; // Or 'Success', 'Paid' - choose a consistent status
+
+        // NEW: Include totalItemsCount in the values for the INSERT statement
+        await queryAsync(insertTransactionQuery, [orderId, transactionAmount, transactionStatus, paymentMethod, totalItemsCount]);
+
+        res.status(200).json({ message: 'Order status updated and transaction recorded successfully!', status: 'success' });
+
+    } catch (error) {
+        console.error('Error updating order status or recording transaction:', error);
+        res.status(500).json({ message: 'Failed to update order status or record transaction.', error: error.message });
+    }
+});
+
 
 
 app.get('/api/user/orders/:userId', async (req, res) => {
